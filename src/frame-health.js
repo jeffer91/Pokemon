@@ -58,9 +58,10 @@ function locateGtlPanel(image){
     const b=bmp[k],g=bmp[k+1],r=bmp[k+2],a=bmp[k+3];
     return a>20&&r>=45&&r<=110&&g>=r+10&&b>=g+8&&b<=175;
   };
-  let best=null;
-  // Search upper screen where the GTL heading appears. Do not depend on
-  // the size, position or native name of the PokeMMO window.
+  const candidates=[];
+  // Different horizontal bars can have almost identical colors. The GTL
+  // TITLE starts above tabs and column headers. Previously the widest bar
+  // could be the lower header, shifting every label by a complete row.
   for(let y=Math.round(height*.09);y<Math.round(height*.34);y++){
     let first=-1;
     for(let x=0;x<=width;x++){
@@ -68,29 +69,31 @@ function locateGtlPanel(image){
       if(match&&first<0)first=x;
       if(!match&&first>=0){
         const span=x-first;
-        if(span>=width*.38&&span<=width*.88 &&
-          (!best||span>best.span||span===best.span&&y<best.y))
-          best={x:first,y,span};
+        if(span>=width*.38&&span<=width*.88){
+          const checkX=Math.min(width-2,first+Math.floor(span*.5));
+          let consistency=0;
+          for(const delta of [0,2,4,6,8,10,12,14]){
+            if(y+delta<height&&isBlue(checkX,y+delta))consistency++;
+          }
+          if(consistency>=4)candidates.push({x:first,y,span,consistency});
+        }
         first=-1;
       }
     }
   }
+  if(!candidates.length)return null;
+  const maxWidth=Math.max(...candidates.map(c=>c.span));
+  // Select the TOP of a broad, continuous bar rather than the longest lower
+  // stripe. If the top is noisy, use the first bar >=90% of the widest.
+  candidates.sort((a,b)=>a.y-b.y || b.span-a.span);
+  const best=candidates.find(c=>c.span>=maxWidth*.90);
   if(!best)return null;
   const scale=image.getSize().width/width;
   const box={x:Math.round(best.x*scale),y:Math.round(best.y*scale),
     width:Math.round(best.span*scale)};
-  // The title bar must also have continuity vertically; a game map or HUD
-  // colored similarly should not be treated as an actionable market.
-  const checkX=Math.min(width-2,best.x+Math.round(best.span*.5));
-  let consistency=0;
-  for(const delta of [0,2,4,6,8,10,12,14]){
-    const yy=best.y+delta;
-    if(yy<height&&isBlue(checkX,yy))consistency++;
-  }
-  if(consistency<4)return null;
+  box.confidence=best.consistency/8;
   box.height=Math.min(image.getSize().height-box.y,Math.round(box.width*.68));
   if(box.height<box.width*.48)return null;
-  box.confidence=consistency/8;
   return box;
 }
 

@@ -33,6 +33,8 @@ function renderData(data){
   $('decisions').textContent=(s.decisions||0)+' decisiones';
   $('balance').textContent=currency(data.balance);
   renderTeamData(data);
+  renderCatalog(data.catalog||[]);
+  renderActivity(s.activity||[]);
   $('radar-tip').textContent=(s.trusted||0)+' precios verificados · '+(s.unverified||0)+
     ' pendientes · REV sin nota cuando faltan comparables · CRI* indica potencial por IV, no compatibilidad de crianza.';
 
@@ -49,7 +51,12 @@ function renderData(data){
   for(const task of s.research||[]){
     const el=document.createElement('div');el.className='task';
     const copy=document.createElement('div'),a=document.createElement('strong'),b=document.createElement('p'),icon=document.createElement('span');
-    a.textContent=task.title;b.textContent=task.detail;copy.append(a,b);
+    a.textContent=task.title;
+    const confidence=task.samples?task.samples+' muestras':'Sin precio verificado';
+    b.textContent=task.detail+' · '+confidence;
+    const badge=document.createElement('small');badge.className='search-source';
+    badge.textContent=task.label||'Investigar';
+    copy.append(a,b,badge);
     icon.className='arrow';icon.textContent='›';el.append(copy,icon);tasks.append(el);
   }
   if(!tasks.childElementCount)tasks.textContent='Sin búsquedas pendientes.';
@@ -226,17 +233,25 @@ function drawTeam(profiles,cover){
   const areas={titular:$('team-starters'),suplente:$('team-bench'),extra:$('team-extra')};
   Object.values(areas).forEach(area=>area.replaceChildren());
   for(const p of profiles){
-    const button=document.createElement('button');button.type='button';
+    const button=document.createElement('div');
     button.className='team-card';button.dataset.id=p.id;
+    const clickArea=document.createElement('button');clickArea.type='button';
+    clickArea.className='team-card-main';clickArea.setAttribute('aria-label','Editar '+p.name);
     const title=document.createElement('strong');title.textContent=p.name;
     const types=document.createElement('small');types.textContent=p.types.join(' / ');
     const objective=document.createElement('small');objective.textContent=objectiveSummary(p);
     const state=document.createElement('span');state.className='team-status';
     state.textContent=p.provisional?'Propuesto':p.status==='propio'?'Propio':
       p.status==='criando'?'En crianza':p.status==='cotizando'?'Cotizando':'Pendiente';
-    button.append(title,types,objective,state);
-    button.addEventListener('click',()=>chooseTarget(p.id));
-    areas[p.role]?.append(button);
+    clickArea.append(title,types,objective,state);
+    clickArea.addEventListener('click',()=>chooseTarget(p.id));
+    const owned=document.createElement('button');owned.type='button';owned.className='owned-switch';
+    const isOwned=p.status==='propio';
+    owned.textContent=isOwned?'✓ Lo tengo':'Me falta';
+    owned.setAttribute('aria-pressed',String(isOwned));
+    owned.title=isOwned?'Marcar como pendiente':'Marcar como propio';
+    owned.addEventListener('click',()=>setOwned(p.id,isOwned?'pendiente':'propio',owned));
+    button.append(clickArea,owned);areas[p.role]?.append(button);
   }
   chooseTarget(selectedProfileId);
   const list=$('team-coverage');list.replaceChildren();
@@ -338,3 +353,75 @@ $('target-form').addEventListener('submit',async event=>{
   }catch(error){$('target-feedback').textContent='No se pudo guardar: '+String(error.message||error);}
   finally{button.disabled=false;}
 });
+
+
+// The team can be updated directly on each card; normal profile editor remains available.
+async function setOwned(id,status,button){
+  if(button.disabled)return;
+  button.disabled=true;
+  try{
+    const all={...(current.settings.teamOverrides||{})};
+    all[id]={...(all[id]||{}),status};
+    await window.radar.saveTeam(all);
+    $('target-feedback').textContent=status==='propio'?'Guardado: ya lo tienes.':'Guardado: te falta.';
+  }catch(error){
+    $('target-feedback').textContent='Error al guardar: '+String(error.message||error);
+  }finally{button.disabled=false;}
+}
+let catalogItems=[],lastCatalogSignature='';
+function drawCatalog(){
+  const target=$('catalog-items');target.replaceChildren();
+  const query=$('catalog-search').value.trim().toLowerCase();
+  const kind=$('catalog-kind').value;
+  let shown=0;
+  for(const p of catalogItems){
+    if(query&&!(p.species+' '+p.evolution).toLowerCase().includes(query))continue;
+    const special=p.requiredIvs.includes(3);
+    if(kind==='special'&&!special||kind==='physical'&&special)continue;
+    shown++;
+    const card=document.createElement('article');card.className='catalog-card';
+    const title=document.createElement('strong');title.textContent=p.species+' → '+p.evolution;
+    const nature=document.createElement('div');nature.className='catalog-nature';
+    nature.textContent=p.nature+' · '+p.requiredIvs.map(i=>IV_LABELS[i]+' 31').join(' + ');
+    const high=document.createElement('small');
+    high.textContent='Avanzado · '+p.competitiveIvs.map(i=>IV_LABELS[i]).join(' / ');
+    const ability=document.createElement('small');
+    ability.textContent='Habilidad normal: '+p.normalAbilities.join(' / ')+
+      ' · objetivo final: '+p.preferredEvolution;
+    const hidden=document.createElement('small');hidden.className='catalog-warning';
+    hidden.textContent='Oculta base: '+(p.hiddenBase||'no definida')+
+      ' · final: '+(p.hiddenAbility||'no definida')+
+      ' · disponibilidad sin verificar';
+    const breeding=document.createElement('small');
+    breeding.textContent='Grupo huevo: '+(p.eggGroups||[]).join(' / ')+
+      (p.breedingLimit?' · '+p.breedingLimit:'');
+    const note=document.createElement('small');note.textContent=p.note;
+    card.append(title,nature,high,ability,hidden,breeding,note);
+    target.append(card);
+  }
+  if(!shown)target.textContent='No hay perfiles con esos filtros.';
+  $('catalog-count').textContent=shown+' de '+catalogItems.length+' perfiles';
+}
+function renderCatalog(items){
+  if(!Array.isArray(items))return;
+  const signature=JSON.stringify(items);
+  if(signature===lastCatalogSignature)return;
+  lastCatalogSignature=signature;catalogItems=items;drawCatalog();
+}
+$('catalog-search').addEventListener('input',drawCatalog);
+$('catalog-kind').addEventListener('change',drawCatalog);
+function renderActivity(rows){
+  const body=$('market-activity');body.replaceChildren();
+  for(const r of rows){
+    const tr=document.createElement('tr');
+    for(const value of [r.species,String(r.count),String(r.verified),currency(r.min)]){
+      const td=document.createElement('td');td.textContent=value;tr.append(td);
+    }
+    body.append(tr);
+  }
+  if(!rows.length){
+    const tr=document.createElement('tr'),td=document.createElement('td');
+    td.colSpan=4;td.textContent='Todavía no existen observaciones suficientes.';
+    tr.append(td);body.append(tr);
+  }
+}

@@ -140,3 +140,27 @@ test('la naturaleza ilegible nunca entra en precios comparables',()=>{
   assert.equal(result.partialRows.length,1);
   assert.equal(result.partialRows[0].missing,'NATURALEZA');
 });
+
+test('alineación: OCR sin el botón de la primera fila conserva el rango 1',()=>{
+  const panel={x:340,y:128,width:1015,height:700};
+  const crop={x:340,y:260,width:1015,height:487,fullWidth:1692,fullHeight:930};
+  const words=[];
+  const word=(text,x,y)=>{
+    const px=panel.x+x*panel.width-crop.x;
+    const py=panel.y+y*panel.width-crop.y;
+    words.push({text:String(text),confidence:95,bbox:{x0:px-3,x1:px+3,y0:py-3,y1:py+3}});
+  };
+  for(let i=0;i<10;i++){
+    const y=.18+i*.042;
+    word('Nv.',.102,y);word(15+i,.135,y);word('Gible',.205,y);
+    word('alegre',.315,y);
+    [12,31,16,11,15,31].forEach((v,j)=>word(v,.368+j*.0335,y));
+    word('$22.000',.594,y);
+    if(i>0)word('Comprar',.925,y);
+  }
+  const result=parseScreen({words},crop.width,crop.height,{panel,crop,gtlConfirmed:true});
+  assert.equal(result.rows.length,10);
+  assert.equal(result.rows[0].rank,1);
+  assert.equal(result.rows[9].rank,10);
+  assert.ok(Math.abs(result.grid.top-.18)<.005);
+});

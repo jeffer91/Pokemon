@@ -1,5 +1,6 @@
 'use strict';
 const {median,normalizedNature,availableToSpend}=require('./market');
+const {findCatalog,catalogFit}=require('./catalog');
 // These are editable targets, not claims that a matching specimen is available.
 // Garchomp is intentionally retained as a separate objective pending a team decision.
 const TEAM=[
@@ -27,6 +28,7 @@ const NATURES=new Set(('fuerte hurana audaz firme picara osada docil placida agi
 const STATUSES=new Set(['pendiente','propio','criando','cotizando']);
 function profileList(overrides={}){
   return TEAM.map(target=>{
+    target={...target,catalog:findCatalog(target.searchSpecies)};
     const raw=overrides&&typeof overrides==='object'?overrides[target.id]:null;
     if(!raw||typeof raw!=='object')return {...target};
     return {...target,nature:raw.nature===undefined?target.nature:raw.nature,
@@ -176,12 +178,15 @@ function priceSummary(rows,profile,mode='direct',now=Date.now()){
 function grade(row,decision,profile=null){
   const score=ivScore(row);
   const fit=profile?fitScore(row,profile):null;
+  const profileFit=catalogFit(row);
   const rev=decision&&Number.isFinite(decision.priceReference)&&decision.comparables>=5?
     Math.round(Math.max(0,Math.min(10,5+(decision.discount||0)*20+(decision.confidence||0)*2))*10)/10:null;
   const cri=score; // Potential from IVs only; breed compatibility not yet verified.
-  return {iv:score,cri,fit,rev,score:fit??score,
-    scoreKind:fit!==null?'AJUSTE':'IV',
-    provisional:rev===null};
+  return {iv:score,cri,fit,rev,
+    score:fit??profileFit?.score??score,
+    scoreKind:fit!==null?'AJUSTE':profileFit!==null?'PERFIL':'IV',
+    provisional:rev===null||profileFit?.provisional===true,
+    abilityChecked:false};
 }
 module.exports={TEAM,IV_LABELS,profileList,validateOverrides,ivScore,
   matchProfile,fitScore,priceSummary,grade,coverage,multiplier};

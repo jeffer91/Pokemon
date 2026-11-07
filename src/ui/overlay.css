@@ -17,3 +17,12 @@ html,body{margin:0;background:transparent;overflow:hidden}
 .buy{background:#137e4ced;border-color:#70dca2;color:#fff}
 .reject{background:#b7343cec;border-color:#e9989f;color:#fff}
 .pending{background:#f0f1f3f3;border-color:#c9ced6;color:#414e5e}
+
+/* Keep both score and budget reason within a single GTL row. */
+.slot{overflow:hidden;padding:0 2px}
+.decision{min-height:0;max-height:calc(100% - 2px);padding:2px 7px;gap:1px;line-height:1.15}
+.decision-top{line-height:1.2}
+.decision-reason{line-height:1.1}
+.decision.dense .decision-top strong:first-child{font-size:11px}
+.decision.dense .decision-top strong:last-child{font-size:9px}
+.decision.dense .decision-reason{font-size:9px}

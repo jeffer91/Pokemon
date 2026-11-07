@@ -46,3 +46,28 @@ test('team and ideal-price views are wired to SQLite without removing the origin
   assert.doesNotMatch(team,/['"]Gengar['"]/);
   assert.doesNotMatch(main,/overlay\?\.hide\(\);\s*setStatus\(\{state:'leyendo'/);
 });
+
+test('catalog batch, live market research and inline ownership are connected',()=>{
+  const main=read('src/main.js'),db=read('src/database.js');
+  const html=read('src/ui/index.html'),ui=read('src/ui/app.js');
+  const team=read('src/team.js'),catalog=read('src/catalog.js'),research=read('src/research.js');
+  assert.match(main,/storage\.marketIntelligence\(\)/);
+  assert.match(main,/storage\.catalogProfiles\(\)/);
+  assert.match(db,/CREATE TABLE IF NOT EXISTS catalog_profiles/);
+  assert.match(db,/PRAGMA user_version=5/);
+  assert.match(html,/data-page="catalogo"/);
+  assert.match(html,/id="market-activity"/);
+  assert.match(ui,/function setOwned/);
+  assert.match(ui,/Lo tengo/);
+  assert.match(research,/comparable/);
+  assert.match(catalog,/hiddenAvailability/);
+  assert.doesNotMatch(team,/['"]Gengar['"]/);
+});
+test('GTL row alignment uses title-first stripe and OCR row extrapolation',()=>{
+  const locate=read('src/frame-health.js');
+  const rec=read('src/recognition.js');
+  const overlay=read('src/ui/overlay.css');
+  assert.match(locate,/candidates\.sort\(\(a,b\)=>a\.y-b\.y/);
+  assert.match(rec,/Math\.round\(\(v-\.18\)\/step\)/);
+  assert.match(overlay,/decision\.dense/);
+});

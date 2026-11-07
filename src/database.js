@@ -5,6 +5,8 @@ const fs = require('node:fs');
 const crypto = require('node:crypto');
 const {validListing, researchSuggestions} = require('./market');
 const {validateOverrides,priceSummary,matchProfile}=require('./team');
+const {CATALOG,validateCatalog}=require('./catalog');
+const {suggestedSearches}=require('./research');
 
 const DEFAULT_SETTINGS = {listingFee:null, captureEnabled:false, reserveRatio:0.30,
   overlayX:0, overlayY:0, overlayScale:1, consentConfirmed:false, captureEngine:null, teamOverrides:{}};
@@ -15,7 +17,7 @@ function openDatabase(folder) {
   const db = new DatabaseSync(filename);
   db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=3000;');
   const version=db.prepare('PRAGMA user_version').get().user_version;
-  if(version > 4) throw new Error('Esta base requiere una versión más reciente de PokéRadar.');
+  if(version > 5) throw new Error('Esta base requiere una versión más reciente de PokéRadar.');
   if(version < 1) {
     db.exec(`BEGIN IMMEDIATE;
       CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -86,6 +88,30 @@ function openDatabase(folder) {
       db.exec('COMMIT');
     }catch(error){db.exec('ROLLBACK');throw error;}
   }
+  if(version < 5){
+    db.exec('BEGIN IMMEDIATE');
+    try{
+      db.exec(`CREATE TABLE IF NOT EXISTS catalog_profiles(
+        id TEXT PRIMARY KEY, species TEXT NOT NULL UNIQUE, version INTEGER NOT NULL,
+        profile_json TEXT NOT NULL, updated_at INTEGER NOT NULL);
+        CREATE INDEX IF NOT EXISTS idx_listing_last_seen ON listings(last_seen DESC);
+        PRAGMA user_version=5;`);
+      db.exec('COMMIT');
+    }catch(error){db.exec('ROLLBACK');throw error;}
+  }
+  // New catalog batches can be delivered via main without replacing user data.
+  validateCatalog(CATALOG);
+  const catalogInsert=db.prepare(`INSERT INTO catalog_profiles(id,species,version,profile_json,updated_at)
+    VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET
+      species=excluded.species,version=excluded.version,
+      profile_json=excluded.profile_json,updated_at=excluded.updated_at
+    WHERE excluded.version>catalog_profiles.version`);
+  db.exec('BEGIN IMMEDIATE');
+  try{
+    const loadedAt=Date.now();
+    for(const item of CATALOG)catalogInsert.run(item.id,item.species,item.version,JSON.stringify(item),loadedAt);
+    db.exec('COMMIT');
+  }catch(error){db.exec('ROLLBACK');throw error;}
   const check=db.prepare('PRAGMA quick_check').get();
   if(Object.values(check)[0] !== 'ok') throw new Error('La base SQLite no superó la comprobación de integridad.');
   const setStmt=db.prepare('INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value');
@@ -189,6 +215,18 @@ function openDatabase(folder) {
   const pricesForSpecies=db.prepare(`SELECT species,level,nature,sex,price,ivs_json,last_seen,seen_count,verified
     FROM listings WHERE species=? COLLATE NOCASE AND last_seen>=?
     ORDER BY last_seen DESC LIMIT 500`);
+  const marketRows=db.prepare(`SELECT species,level,nature,sex,price,ivs_json,last_seen,seen_count,verified
+    FROM listings WHERE last_seen>=? ORDER BY last_seen DESC LIMIT 2500`);
+  function marketIntelligence(){
+    const rows=marketRows.all(Date.now()-7*86400000).map(r=>({
+      ...r,ivs:JSON.parse(r.ivs_json),lastSeen:r.last_seen
+    }));
+    return suggestedSearches(rows);
+  }
+  function catalogProfiles(){
+    return db.prepare('SELECT profile_json FROM catalog_profiles ORDER BY rowid').all()
+      .map(r=>JSON.parse(r.profile_json));
+  }
   function targetPrices(profiles){
     const cutoff=Date.now()-7*86400000;
     return profiles.map(profile=>{
@@ -238,7 +276,7 @@ function openDatabase(folder) {
   async function saveBackup(){const dest=path.join(folder,'backups');fs.mkdirSync(dest,{recursive:true});
     const file=path.join(dest,`pokeradar-${new Date().toISOString().slice(0,10)}.sqlite`);
     if(!fs.existsSync(file)) await backup(db,file);return file;}
-  return {db,filename,settings:getSettings,applySettings,recordListings,recordMarketScan,candidates,targetPrices,recordRecommendation,
+  return {db,filename,settings:getSettings,applySettings,recordListings,recordMarketScan,candidates,targetPrices,marketIntelligence,catalogProfiles,recordRecommendation,
     recordBalance,latestBalance,recent,history,stats,summary,addTransaction,transactionHistory,saveBackup,close:()=>db.close()};
 }
 module.exports={openDatabase,identity,DEFAULT_SETTINGS};

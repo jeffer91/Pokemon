@@ -85,3 +85,21 @@ test('reads gender colors only from the small symbol area',()=>{
   const sex=inferGtlSexes(image,panel,grid);
   assert.equal(sex[0],'M');assert.equal(sex[1],'F');assert.equal(sex[2],'?');
 });
+
+test('prefers upper GTL title instead of longer lower header bars',()=>{
+  const {locateGtlPanel}=require('../src/frame-health');
+  const w=320,h=180,buf=Buffer.alloc(w*h*4);
+  for(let y=0;y<h;y++)for(let x=0;x<w;x++){
+    const p=(y*w+x)*4;
+    const title=x>=65&&x<256&&y>=25&&y<=40;
+    const lower=x>=62&&x<258&&y>=45&&y<=62;
+    const band=title||lower;
+    buf[p]=band?120:13;buf[p+1]=band?99:15;buf[p+2]=band?75:12;buf[p+3]=255;
+  }
+  const img={isEmpty:()=>false,getSize:()=>({width:w,height:h}),toBitmap:()=>buf};
+  img.resize=()=>img;
+  const panel=locateGtlPanel(img);
+  assert.ok(panel);
+  assert.equal(panel.y,25);
+  assert.ok(panel.width>=190);
+});

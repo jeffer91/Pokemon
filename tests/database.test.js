@@ -36,7 +36,7 @@ test('SQLite v2 retains verified listings and records partial OCR without mixing
   const scan=db.recordMarketScan({rows:[{...p(),rank:4}],partialRows:[{rank:5,species:'Gible',price:12000,ivs:[31,null,null,null,null,null],missing:'IV_INCOMPLETOS'}],context:'GTL|newest',sort:'newest',wordCount:65,imageHash:'abc'});
   assert.equal(scan.saved,1);assert.equal(scan.partial,1);
   assert.equal(db.summary().total,1);assert.equal(db.summary().scans,1);assert.equal(db.summary().partials,1);
-  assert.equal(db.db.prepare('PRAGMA user_version').get().user_version,4);
+  assert.equal(db.db.prepare('PRAGMA user_version').get().user_version,5);
   db.close();fs.rmSync(folder,{recursive:true,force:true});
 });
 
@@ -114,5 +114,24 @@ test('SQLite persists editable targets and matches filtered ideal market prices'
   assert.equal(db.settings().teamOverrides.gyarados.status,'cotizando');
   assert.equal(db.summary().trusted,1);
   assert.throws(()=>db.applySettings({teamOverrides:{gengar:{status:'propio'}}}));
+  db.close();fs.rmSync(dir,{recursive:true,force:true});
+});
+
+test('catálogo v5 y sugerencias quedan disponibles al reiniciar, sin borrar observaciones',()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'radar-catalog-'));
+  let db=openDatabase(dir);
+  assert.equal(db.db.prepare('PRAGMA user_version').get().user_version,5);
+  assert.equal(db.catalogProfiles().length,10);
+  assert.equal(db.catalogProfiles().find(p=>p.species==='Shroomish').evolution,'Breloom');
+  const row={species:'Gible',nature:'alegre',level:1,sex:'M',
+    ivs:[12,31,8,6,12,31],price:14000,ocrReliable:true,rank:1};
+  db.recordMarketScan({rows:[row],context:'catalog-test',imageHash:'a'});
+  const intel=db.marketIntelligence();
+  assert.ok(intel.suggestions.length>=1);
+  assert.ok(intel.activity.some(p=>p.species==='Gible'));
+  db.close();
+  db=openDatabase(dir);
+  assert.equal(db.catalogProfiles().length,10);
+  assert.equal(db.recent().find(p=>p.species==='Gible').price,14000);
   db.close();fs.rmSync(dir,{recursive:true,force:true});
 });

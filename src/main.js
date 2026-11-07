@@ -18,6 +18,7 @@ let sessionActive=false,sessionVersion=0,working=false,mode='idle';
 let headerHash='',tableHash='',lastHeaderCheckedAt=0,lastTableCheckedAt=0,lastBalanceReadAt=0,
   lastPublished=0,lastOverlayBounds='',startedAt=0,ocrFailures=0,emptyReads=0;
 let lastDisplayedRows=null,lastDisplayedLayout=null,lastPageSignature='',lastMarketImage=null;
+let marketCache=null,marketCacheAt=0;
 let status={state:'inactivo',message:'Pulsa Play para iniciar.',running:false,recognized:0,latency:null};
 function broadcast(channel,payload){
   for(const w of [dashboard,overlay])if(w&&!w.isDestroyed())w.webContents.send(channel,payload);
@@ -103,7 +104,8 @@ async function showResults(rows,version,layout=null){
     width,height:10*step+10
   };
   if(!sessionActive||sessionVersion!==version)return;
-  const signature=JSON.stringify(rows.map(r=>[r.rank,r.species,r.price,r.decision,r.score,r.reason]));
+  const signature=JSON.stringify(rows.map(r=>[r.rank,r.species,r.price,r.decision,r.score,
+    r.scoreKind,r.reason,r.reasonText]));
   if(signature!==lastPageSignature||lastOverlayBounds!==JSON.stringify(bounds)||!overlay.isVisible()){
     broadcast('radar:overlay',{mode:'results',rows,step,scale});
     lastPageSignature=signature;
@@ -130,15 +132,14 @@ function publishData(force=false){
   const profiles=profileList(storage.settings().teamOverrides);
   const summary=storage.summary();
   const prices=storage.targetPrices(profiles);
-  const needs=prices.filter(p=>p.direct.samples<5&&p.breeding.samples<5).slice(0,3);
-  summary.research=[...needs.map(item=>({
-    key:'ideal-'+item.id,
-    title:item.searchSpecies+' · objetivo ideal',
-    detail:'Busca naturaleza e IV del objetivo; faltan referencias verificadas.'
-  })),...(summary.research||[])].slice(0,5);
+  if(!marketCache||now-marketCacheAt>=15000){
+    marketCache=storage.marketIntelligence();marketCacheAt=now;
+  }
+  summary.research=marketCache.suggestions;
+  summary.activity=marketCache.activity;
   broadcast('radar:data',{
-    summary,profiles,prices,coverage:coverage(profiles),
-    recent:recentEvaluated(profiles),history:storage.history(),
+    summary,profiles,prices,catalog:storage.catalogProfiles(),
+    coverage:coverage(profiles),recent:recentEvaluated(profiles),history:storage.history(),
     trades:storage.transactionHistory(),settings:storage.settings(),balance:storage.latestBalance()
   });
 }
@@ -318,7 +319,7 @@ async function tick(){
     const profileFor=row=>profiles.find(p=>p.searchSpecies.toLowerCase()===
       String(row.species||'').toLowerCase())||null;
     const explain=reason=>({
-      RESERVA_30_POR_CIENTO:'Fuera de presupuesto',
+      RESERVA_30_POR_CIENTO:'Fuera de tu presupuesto',
       MARGEN_INSUFICIENTE:'Margen insuficiente',
       DESCUENTO_Y_MARGEN:'Precio favorable',
       MUESTRA_INSUFICIENTE:'Faltan precios fiables',
@@ -452,7 +453,11 @@ async function startSession(){
 function handlers(){
   ipcMain.handle('radar:getState',()=>{
     const profiles=profileList(storage.settings().teamOverrides);
-    return {status,settings:storage.settings(),summary:storage.summary(),
+    const summary=storage.summary();
+    const intelligence=storage.marketIntelligence();
+    summary.research=intelligence.suggestions;
+    summary.activity=intelligence.activity;
+    return {status,settings:storage.settings(),summary,catalog:storage.catalogProfiles(),
     profiles,prices:storage.targetPrices(profiles),coverage:coverage(profiles),
     recent:recentEvaluated(profiles),history:storage.history(),trades:storage.transactionHistory(),
     balance:storage.latestBalance(),diagnostics:diagnostics?.snapshot()};});
@@ -498,6 +503,7 @@ function handlers(){
     if(Object.hasOwn(changes,'captureEnabled'))throw Error('Usa Play o Stop para controlar el radar.');
     const settings=storage.applySettings(changes);publishData(true);return settings;
   });
+  ipcMain.handle('radar:catalog',()=>storage.catalogProfiles());
   ipcMain.handle('radar:team',()=>{
     const profiles=profileList(storage.settings().teamOverrides);
     return {profiles,prices:storage.targetPrices(profiles),coverage:coverage(profiles)};

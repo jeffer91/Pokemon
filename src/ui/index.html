@@ -15,6 +15,7 @@
   <nav aria-label="Secciones">
     <button class="tab active" data-tab="radar">Radar</button>
     <button class="tab" data-tab="equipo">Equipo ideal</button>
+    <button class="tab" data-tab="catalogo">Pokédex ideal</button>
     <button class="tab" data-tab="precios">Precios ideales</button>
     <button class="tab" data-tab="buscar">Buscar</button>
     <button class="tab" data-tab="historial">Historial</button>
@@ -66,6 +67,18 @@
       <p class="hint" id="target-feedback" role="status"></p>
     </div>
   </section>
+  <section class="page" data-page="catalogo" hidden>
+    <div class="panel">
+      <div class="heading"><h2>Pokédex ideal</h2><span id="catalog-count">Lote 1 · 10 perfiles</span></div>
+      <p class="hint">Naturaleza, IV prioritarios y habilidades para comprar, criar o investigar. La habilidad no se lee actualmente del GTL: siempre se debe confirmar.</p>
+      <div class="price-filter">
+        <label>Buscar <input type="search" id="catalog-search" placeholder="Nombre o evolución"></label>
+        <label>Perfil <select id="catalog-kind"><option value="all">Todos</option><option value="physical">Ataque físico</option><option value="special">Ataque especial</option></select></label>
+      </div>
+      <div id="catalog-items" class="catalog-grid"></div>
+      <p class="hint" id="catalog-feedback">Estos diez perfiles se amplían por lotes sin borrar precios ni historial.</p>
+    </div>
+  </section>
   <section class="page" data-page="precios" hidden>
     <div class="panel">
       <div class="heading"><h2>Base de precios ideales</h2><span>SQLite local</span></div>
@@ -88,7 +101,16 @@
   </section>
   <section class="page" data-page="buscar" hidden>
     <div class="panel"><div class="heading"><h2>Búsquedas sugeridas</h2><span>GTL</span></div>
-    <div id="suggestions" class="tasks"></div></div>
+    <div id="suggestions" class="tasks"></div>
+    <p class="hint">Actividad significa anuncios observados, no ventas demostradas. Los precios de referencia solo usan comparables verificados.</p>
+    </div>
+    <div class="panel">
+      <div class="heading"><h2>Mercados más observados</h2><span>Últimos 7 días</span></div>
+      <div class="scroll"><table>
+      <thead><tr><th>Pokémon</th><th>Anuncios</th><th>Verificados</th><th>Mínimo*</th></tr></thead>
+      <tbody id="market-activity"></tbody></table></div>
+      <p class="hint">*Mínimo entre registros verificados; sin equivalencia de naturaleza, IV, sexo o nivel no es precio de un ejemplar ideal.</p>
+    </div>
   </section>
   <section class="page" data-page="historial" hidden>
     <div class="panel"><div class="heading"><h2>Decisiones</h2></div><div id="history" class="entries">Aún no hay datos.</div></div>

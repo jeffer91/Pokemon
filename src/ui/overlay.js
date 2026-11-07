@@ -27,7 +27,8 @@ window.radar.on('radar:overlay',payload=>{
     if(item){
       const pill=document.createElement('div');
       pill.className='decision '+(item.decision==='COMPRAR'?'buy':
-        item.decision==='NO_COMPRAR'?'reject':'pending');
+        item.decision==='NO_COMPRAR'?'reject':'pending')+
+        (payload.step<38?' dense':'');
       const upper=document.createElement('div');upper.className='decision-top';
       const score=document.createElement('strong');
       score.textContent=Number.isFinite(item.score)?item.score.toFixed(1)+'/10':'—/10';

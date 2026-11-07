@@ -170,8 +170,13 @@ function panelRowGrid(words) {
   }
   gaps.sort((a,b)=>a-b);
   const step=gaps.length>=2?gaps[Math.floor(gaps.length/2)]:.042;
-  const first=markers.find(v=>v>=.155&&v<=.205);
-  return {top:first??.18,step};
+  // Markers may start at row 2, 3, etc. Recover the true first-row
+  // anchor from the established panel geometry, never assume first OCR
+  // "Comprar" belongs to rank 1.
+  const anchors=markers.map(v=>v-Math.round((v-.18)/step)*step)
+    .filter(v=>v>=.165&&v<=.205).sort((a,b)=>a-b);
+  const first=anchors.length?anchors[Math.floor(anchors.length/2)]:.18;
+  return {top:first,step,anchors:markers.length};
 }
 
 async function createRecognizer(){

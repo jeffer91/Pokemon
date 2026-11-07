@@ -73,3 +73,20 @@ nav{flex-wrap:wrap}
 #team-coverage .entry{margin-bottom:5px}
 @media(max-width:600px){.team-grid{grid-template-columns:1fr}
 .target-form{grid-template-columns:1fr 1fr}.price-filter{grid-template-columns:1fr}}
+
+/* Catalog in light mode and one-click owned state per team card. */
+.catalog-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.catalog-card{display:flex;flex-direction:column;gap:6px;background:white;border:1px solid #e1e8ef;
+  border-radius:12px;padding:14px;min-width:0}
+.catalog-card strong{color:#17364c;font-size:14px}
+.catalog-card small{color:#60758a;font-size:11px;line-height:1.45}
+.catalog-card .catalog-nature{font-weight:600;font-size:12px;color:#216d54}
+.catalog-card .catalog-warning{color:#9b6d25}
+.team-card{gap:4px}
+.team-card-main{background:transparent;border:0;display:flex;flex-direction:column;gap:4px;
+  text-align:left;width:100%;padding:0;cursor:pointer;color:inherit}
+.owned-switch{align-self:flex-start;padding:4px 10px;margin-top:6px;min-height:30px;
+  background:#f6f8fa;border:1px solid #cfdce5;border-radius:9px;font-size:11px;color:#566c7d}
+.owned-switch[aria-pressed="true"]{border-color:#b4dbc4;background:#dff2e7;color:#116f45}
+.search-source{display:block;font-size:10px;color:#1f8056;margin-top:4px}
+@media(max-width:620px){.catalog-grid{grid-template-columns:1fr}}

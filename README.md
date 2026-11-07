@@ -124,3 +124,19 @@ Cuando falla la captura, sigue apareciendo el código exacto. Ningún motor pued
 - **Limitaciones:** el OCR no puede confirmar habilidades, grupos huevo, ventas reales ni disponibilidad de una publicación. El precio calculado para crianza contempla solo ejemplares de la especie objetivo con IV heredables; no calcula todavía un árbol completo entre especies. La nota IV no es una valoración integral del potencial competitivo. La respuesta inferior a 1 segundo sigue requiriendo mejoras y pruebas reales en Windows 11.
 
 Prueba: actualiza con `git pull origin main`, luego `npm install`, `npm run check`, `npm test`, `npm start`. Comprueba Equipo ideal → edita un objetivo → guarda → reinicia. En Precios ideales, revisa los datos confirmados. Abre GTL, pulsa Play y cambia de página para verificar que las etiquetas no parpadeen ni queden sobre anuncios anteriores.
+
+## v0.6.0 — Primer lote Pokédex ideal + sugerencias de mercado
+
+Se incorporan diez perfiles de **Staryu, Riolu, Sandile, Litwick, Shroomish, Magnemite, Swinub, Dratini, Magikarp y Gible**, con naturalezas iniciales, IV prioritarios, objetivo avanzado, habilidades normales y ocultas de la etapa básica/final y restricciones de crianza. Cada lote futuro se añade con versiones de catálogo sin borrar las cotizaciones o las preferencias del usuario.
+
+El nuevo apartado **Pokédex ideal** muestra los diez perfiles y permite filtrar por nombre y ataque físico/especial. Las habilidades ocultas se muestran con el estado **disponibilidad sin verificar**: el OCR de la tabla GTL no reconoce habilidades. No se debe inferir que una oferta tenga la habilidad necesaria ni que la habilidad oculta esté a la venta.
+
+El apartado **Buscar** combina referencias de mercado verificadas (naturaleza, seis IV, grupo de nivel y sexo comparables) con perfiles que necesitan muestras y especies con muchos anuncios observados. La existencia de anuncios, su desaparición o su antigüedad **no equivalen a ventas confirmadas**. Los precios mínimos y las medianas proceden de SQLite, no de supuestas consultas remotas. Un grupo necesita al menos cinco precios verificados antes de considerarse contrastable, y aun así solo sirve para investigar posibles ofertas.
+
+En **Equipo ideal**, cada tarjeta tiene un botón **Lo tengo / Me falta** que guarda el estado directamente en SQLite, sin alterar naturaleza ni IV configurados. Sigue habiendo seis titulares, seis suplentes (Scolipede provisional en lugar de Gengar) y Garchomp como objetivo adicional.
+
+La detección del GTL prioriza la franja superior y extrapola el centro de la primera fila aunque el OCR no reconozca el primer botón Comprar; esto evita un desplazamiento de una fila en las etiquetas flotantes. Las etiquetas muestran puntuación y explicación en una misma fila, con presentación compacta si el espacio es pequeño, y no se ocultan por un ciclo normal de OCR.
+
+SQLite se migra sin destruir registros al esquema **v5** y crea `catalog_profiles`, con datos versionados. La recomendación `COMPRAR` sigue requiriendo muestras suficientes, presupuesto disponible tras reservar el 30 %, márgenes netos estimados y comprobación manual de la habilidad para objetivos competitivos.
+
+**Validación local:** `git pull origin main`, `npm install`, `npm run check`, `npm test`, `npm start`. Para verificar alineación, abre el GTL y cambia entre distintas páginas. Si una etiqueta no coincide con su fila, envía pantalla y diagnóstico; esta versión no ha podido ejecutarse en el PC del usuario.
