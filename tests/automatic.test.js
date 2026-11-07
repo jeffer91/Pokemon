@@ -20,3 +20,13 @@ test('Ajustes oculta coordenadas y cuota manuales',()=>{
   assert.match(html,/Comisión de reventa/);
   assert.match(html,/Ubicación del radar/);
 });
+
+test('la aplicación intenta captura directa y fallback del monitor',()=>{
+  const main=read('src/main.js');
+  const capture=read('src/capture-source.js');
+  assert.match(main,/createGameCapture/);
+  assert.match(main,/Sin captura/);
+  assert.match(capture,/types:\['window'\]/);
+  assert.match(capture,/types:\['screen'\]/);
+  assert.match(capture,/locateWindow/);
+});

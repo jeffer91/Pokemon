@@ -70,3 +70,12 @@ La pestaña pequeña se sitúa en el espacio libre dentro de la ventana del jueg
 5. SQLite migra automáticamente del esquema 1 al 2 preservando todo el historial. Conserva cada barrido y las filas parciales en tablas separadas para no contaminar los precios válidos. Las páginas que no puede identificar quedan como desconocidas, no como página 1.
 
 El OCR sigue necesitando calibración y pruebas en tu Windows 11. El objetivo de respuesta inferior a un segundo no está garantizado. La comisión continúa siendo una estimación conservadora, no una tarifa oficial verificada.
+
+## v0.3.1 — Captura de Windows con respaldo
+
+- El radar intenta primero la captura directa de la ventana de **PokéMMO**. Cuando Electron devuelve una miniatura vacía o no enumera la ventana, utiliza la geometría del cliente obtenida mediante Windows y captura únicamente ese rectángulo desde el monitor correspondiente.
+- Los errores de diagnóstico distinguen `WIN-NOT-FOUND`, `CAP-NO-GEOMETRY`, `CAP-SCREEN-EMPTY`, `CAP-RECT` y `CAP-SCREEN-BLANK`. El estado indica también `CAP-WINDOW` o `CAP-SCREEN` cuando obtiene una imagen útil.
+- El detector GTL ya no depende de siete puntos de referencia estrictos. Comprueba además la proporción del panel azul grisáceo, calibrada con las capturas de la interfaz de noviembre de 2026.
+- La localización de la ventana espera una búsqueda ya iniciada en vez de devolver un resultado nulo prematuro. No se automatizan clics ni compras.
+- Los dos métodos de captura solo funcionan después de Play y el recorte de pantalla se mantiene en memoria. **Si necesitas comprobar si funciona realmente en tu equipo, abre Diagnóstico y pulsa Copiar diagnóstico.**
+- **Limitación:** no se ha ejecutado el cliente real de PokéMMO en el entorno de desarrollo. La compatibilidad y los FPS deben verificarse en tu Windows 11; el motor OCR aún puede requerir ajustes con datos reales.

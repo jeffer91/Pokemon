@@ -31,3 +31,19 @@ test('does not mistake regular gameplay for GTL',()=>{
   const image=bmp();
   assert.equal(inspectPixels(image,160,80).gtl,false);
 });
+
+test('real-layout GTL table is detected when only five old landmarks match',()=>{
+  const w=160,h=82,arr=Buffer.alloc(w*h*4);
+  for(let y=0;y<h;y++)for(let x=0;x<w;x++){
+    const k=(y*w+x)*4,table=x/w>=.20&&x/w<=.81&&y/h>=.14&&y/h<=.82;
+    arr[k]=table?82+(x+y)%8:95+(x*5+y)%40; // B
+    arr[k+1]=table?74+(x+y)%7:160+(x*3+y)%40; // G
+    arr[k+2]=table?64+(x+y)%6:200+(x+y)%30; // R
+    arr[k+3]=255;
+  }
+  for(const [x,y] of PANEL_POINTS.slice(0,5))set(arr,w,h,x,y,220,180,110);
+  const result=inspectPixels(arr,w,h);
+  assert.ok(result.score<=5);
+  assert.ok(result.panelRatio>.75);
+  assert.equal(result.gtl,true);
+});

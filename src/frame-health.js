@@ -12,7 +12,7 @@ function pixel(bitmap,width,height,x,y){
 }
 function inspectPixels(bitmap,width,height){
   if(!Buffer.isBuffer(bitmap)||width<30||height<20||bitmap.length<width*height*4)
-    return {valid:false,gtl:false,score:0,reason:'CAP-002'};
+    return {valid:false,gtl:false,score:0,panelRatio:0,reason:'CAP-002'};
   const colors=new Set();
   for(let y=0.05;y<.96;y+=.11)for(let x=.04;x<.97;x+=.09){
     const p=pixel(bitmap,width,height,x,y);
@@ -24,11 +24,23 @@ function inspectPixels(bitmap,width,height){
     const p=pixel(bitmap,width,height,x,y);
     if(p.a>20&&p.r>=35&&p.r<=125&&p.g>=p.r+2&&p.b>=p.g+3&&p.b<=160)score++;
   }
-  // Nine reference landmarks match in real 2026-11-07 GTL captures.
-  return {valid,gtl:valid&&score>=7,score,reason:valid?'OK':'CAP-003'};
+  // A full GTL table is predominantly blue-grey. In the real screenshots,
+  // only five old landmarks match, while over 85% of the panel grid matches.
+  let panelMatches=0,panelSamples=0;
+  for(let y=.16;y<=.77;y+=.034){
+    for(let x=.22;x<=.78;x+=.032){
+      const p=pixel(bitmap,width,height,x,y);
+      panelSamples++;
+      if(p.a>20&&p.r>=35&&p.r<=130&&p.g>=p.r-2&&p.b>=p.g-2&&p.b<=165)
+        panelMatches++;
+    }
+  }
+  const panelRatio=panelMatches/panelSamples;
+  return {valid,gtl:valid&&(score>=7||panelRatio>=.65),
+    score,panelRatio,reason:valid?'OK':'CAP-003'};
 }
 function inspectThumbnail(image){
-  if(!image||image.isEmpty())return {valid:false,gtl:false,score:0,reason:'CAP-002'};
+  if(!image||image.isEmpty())return {valid:false,gtl:false,score:0,panelRatio:0,reason:'CAP-002'};
   const small=image.resize({width:160,quality:'good'}),size=small.getSize();
   return inspectPixels(small.toBitmap(),size.width,size.height);
 }

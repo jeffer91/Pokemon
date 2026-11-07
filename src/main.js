@@ -9,9 +9,10 @@ const {locateWindow}=require('./window-locator');
 const {nextDelay,region,shouldCheckHeader}=require('./scan-policy');
 const {inspectThumbnail}=require('./frame-health');
 const {createDiagnostics}=require('./diagnostics');
+const {createGameCapture}=require('./capture-source');
 
 if(!app.requestSingleInstanceLock())app.quit();
-let dashboard,overlay,storage,recognizer,scanTimer,backupTimer,diagnostics;
+let dashboard,overlay,storage,recognizer,scanTimer,backupTimer,diagnostics,captureAgent;
 let sessionActive=false,sessionVersion=0,working=false,mode='idle';
 let headerHash='',tableHash='',lastHeaderCheckedAt=0,lastTableCheckedAt=0,lastBalanceReadAt=0,
   lastPublished=0,lastOverlayBounds='',startedAt=0,ocrFailures=0,emptyReads=0;
@@ -108,12 +109,7 @@ function cropped(picture,width,height,part){
   const r=region(width,height,part);
   return picture.crop(r).toPNG();
 }
-async function getGameSource(active){
-  const sources=await desktopCapturer.getSources({
-    types:['window'],thumbnailSize:active?{width:1680,height:900}:{width:1280,height:720}
-  });
-  return sources.find(s=>/pokemmo/i.test(s.name)&&!s.thumbnail.isEmpty());
-}
+async function getGameSource(active){return captureAgent.capture(active);}
 function schedule(ms){
   clearTimeout(scanTimer);
   if(sessionActive)scanTimer=setTimeout(tick,ms);
@@ -125,26 +121,30 @@ async function tick(){
   const version=sessionVersion,start=performance.now();
   let stage='window';
   try{
-    const source=await getGameSource(mode==='gtl');
+    const capture=await getGameSource(mode==='gtl');
     if(!sessionActive||version!==sessionVersion)return;
-    if(!source){
-      mode='idle';headerHash='';tableHash='';
-      track('window','warn','WIN-001','Ventana de PokéMMO no localizada');
-      track('capture','pending','CAP-000','Esperando la ventana del juego');
-      track('gtl','pending','GTL-000','Sin captura');
-      setStatus({state:'esperando',message:'Buscando PokéMMO...',recognized:0});
-      await showCompact('Buscando');return;
+    if(!capture?.image){
+      mode='idle';headerHash='';tableHash='';lastTableCheckedAt=0;
+      const code=capture?.code||'CAP-UNKNOWN';
+      track('window',capture?.windowFound?'ok':'warn',
+        capture?.windowFound?'WIN-OK':'WIN-001',
+        capture?.windowFound?'Ventana identificada; comprobando imagen':'PokéMMO no localizado');
+      track('capture','error',code,capture?.detail||'Sin imagen del juego');
+      track('gtl','pending','GTL-000','No hay imagen del juego');
+      setStatus({state:'error',message:'Sin captura · '+code,recognized:0});
+      await showCompact('Error '+code);return;
     }
-    track('window','ok','WIN-OK','PokéMMO localizado');
+    track('window','ok','WIN-OK','PokéMMO localizado ('+capture.via+')');
     stage='capture';
-    const image=source.thumbnail,size=image.getSize(),health=inspectThumbnail(image);
+    const image=capture.image,size=image.getSize(),health=inspectThumbnail(image);
     if(!health.valid){
       mode='idle';tableHash='';headerHash='';
       track('capture','error',health.reason,'Captura vacía o sin imagen útil');
       setStatus({state:'error',message:'No se recibió una imagen válida del juego.',recognized:0});
       await showCompact('Sin imagen');return;
     }
-    track('capture','ok','CAP-OK',size.width+' × '+size.height+' píxeles');
+    track('capture','ok',capture.code,
+      size.width+' × '+size.height+' píxeles · '+capture.via);
     let visibleGtl=health.gtl;
     // Pixel geometry detects the GTL before OCR, even when titles are unreadable.
     // Do not launch CPU-heavy OCR during ordinary gameplay (score is near zero).
@@ -262,9 +262,9 @@ async function tick(){
     if(actionable){
       stage='capture';
       const fresh=await getGameSource(true);
-      if(!fresh||fresh.thumbnail.isEmpty())return showCompact('GTL actualizado');
-      const bounds=fresh.thumbnail.getSize();
-      const check=imageHash(cropped(fresh.thumbnail,bounds.width,bounds.height,'market'));
+      if(!fresh?.image)return showCompact('GTL actualizado');
+      const bounds=fresh.image.getSize();
+      const check=imageHash(cropped(fresh.image,bounds.width,bounds.height,'market'));
       if(check!==fp){
         tableHash='';lastTableCheckedAt=0;
         await showCompact('GTL actualizado');
@@ -345,6 +345,7 @@ app.whenReady().then(async()=>{
   // Previous installations must not restart capture without Play.
   if(storage.settings().captureEnabled)storage.applySettings({captureEnabled:false});
   diagnostics=createDiagnostics(app.getPath('userData'));
+  captureAgent=createGameCapture({desktopCapturer,screen,locateWindow,inspectThumbnail});
   track('database','ok','DB-OK','SQLite abierto y verificado');
   createWindows();handlers();
   setTimeout(()=>publishData(true),600);
