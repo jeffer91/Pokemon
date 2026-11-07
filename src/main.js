@@ -62,7 +62,8 @@ async function showCompact(label='Radar'){
   if(!sessionActive||!overlay||overlay.isDestroyed())return;
   const version=sessionVersion;
   broadcast('radar:overlay',{mode:'compact',label});
-  place(compactFallback());
+  const bounds=overlay.getBounds();
+  if(!overlay.isVisible() || bounds.width!==110 || bounds.height!==32)place(compactFallback());
   const game=await locateWindow();
   if(!sessionActive||version!==sessionVersion||!game)return;
   const work=screen.getDisplayMatching(game).workArea;
@@ -146,7 +147,8 @@ async function tick(){
     track('capture','ok','CAP-OK',size.width+' × '+size.height+' píxeles');
     let visibleGtl=health.gtl;
     // Pixel geometry detects the GTL before OCR, even when titles are unreadable.
-    if(!visibleGtl && mode!=='gtl'){
+    // Do not launch CPU-heavy OCR during ordinary gameplay (score is near zero).
+    if(!visibleGtl && mode!=='gtl' && health.score>=4){
       stage='ocr';
       if(Date.now()-startedAt<3500){
         track('gtl','pending','GTL-000','Buscando Servidor de Comercio');
