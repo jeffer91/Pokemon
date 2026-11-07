@@ -36,7 +36,7 @@ test('SQLite v2 retains verified listings and records partial OCR without mixing
   const scan=db.recordMarketScan({rows:[{...p(),rank:4}],partialRows:[{rank:5,species:'Gible',price:12000,ivs:[31,null,null,null,null,null],missing:'IV_INCOMPLETOS'}],context:'GTL|newest',sort:'newest',wordCount:65,imageHash:'abc'});
   assert.equal(scan.saved,1);assert.equal(scan.partial,1);
   assert.equal(db.summary().total,1);assert.equal(db.summary().scans,1);assert.equal(db.summary().partials,1);
-  assert.equal(db.db.prepare('PRAGMA user_version').get().user_version,3);
+  assert.equal(db.db.prepare('PRAGMA user_version').get().user_version,4);
   db.close();fs.rmSync(folder,{recursive:true,force:true});
 });
 
@@ -63,7 +63,7 @@ test('solo la segunda lectura OCR consistente habilita comparables',()=>{
   // Force the existing dedup window to pass by waiting through a stubbed clock.
   const original=Date.now;
   try{
-    const future=original()+11000;
+    const future=original()+62000;
     Date.now=()=>future;
     db.recordMarketScan({rows:[row],context:'GTL',imageHash:'second'});
     assert.equal(db.summary().trusted,1);
@@ -81,5 +81,36 @@ test('el historial muestra especie y precio sin multiplicar decisiones iguales',
   assert.equal(db.summary().decisions,1);
   assert.equal(db.history()[0].species,'Dratini');
   assert.equal(db.history()[0].price,21000);
+  db.close();fs.rmSync(dir,{recursive:true,force:true});
+});
+
+test('SQLite persists editable targets and matches filtered ideal market prices',()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'radar-targets-'));
+  let db=openDatabase(dir);
+  db.applySettings({teamOverrides:{gyarados:{
+    nature:'Alegre',ivRequired:[1,5],level:1,status:'cotizando'}}});
+  const row={species:'Magikarp',nature:'alegre',level:1,sex:'M',
+    ivs:[20,31,12,14,18,31],price:25500,ocrReliable:true,rank:1};
+  db.recordMarketScan({rows:[row],context:'price-ideal',imageHash:'first'});
+  const {profileList}=require('../src/team');
+  let priced=db.targetPrices(profileList(db.settings().teamOverrides))
+    .find(p=>p.id==='gyarados');
+  assert.equal(priced.direct.samples,0);
+  assert.equal(priced.unverified,1);
+  const original=Date.now;
+  try{
+    Date.now=()=>original()+62000;
+    db.recordMarketScan({rows:[row],context:'price-ideal',imageHash:'new-scan'});
+    priced=db.targetPrices(profileList(db.settings().teamOverrides))
+      .find(p=>p.id==='gyarados');
+    assert.equal(priced.direct.samples,1);
+    assert.equal(priced.direct.min,25500);
+    assert.equal(priced.breeding.samples,1);
+  }finally{Date.now=original;}
+  db.close();
+  db=openDatabase(dir);
+  assert.equal(db.settings().teamOverrides.gyarados.status,'cotizando');
+  assert.equal(db.summary().trusted,1);
+  assert.throws(()=>db.applySettings({teamOverrides:{gengar:{status:'propio'}}}));
   db.close();fs.rmSync(dir,{recursive:true,force:true});
 });

@@ -43,3 +43,33 @@ input,select{border:1px solid #dbe3eb;background:#fff;color:#25374c;border-radiu
 .engine-row .diag-info small{line-height:1.4;overflow-wrap:anywhere}
 .engine-row .diag-code{font-weight:700}
 #engine-feedback{margin:9px 0 0}
+
+/* Minimal light team and validated-price views */
+nav{flex-wrap:wrap}
+.tab{flex:1 0 100px;font-size:12px;padding:10px 5px}
+.team-title{font-size:12px;margin:18px 0 9px;color:#5e7084}
+.team-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}
+.team-card{position:relative;display:flex;flex-direction:column;gap:4px;text-align:left;
+  border:1px solid #dce5ec;border-radius:10px;background:#fff;padding:12px;min-width:0}
+.team-card:hover,.team-card.selected{border-color:#1e8555;background:#f3fbf6}
+.team-card strong{font-size:13px;color:#21384a}
+.team-card small{font-size:11px;color:#718397;line-height:1.35}
+.team-status{display:inline-block;align-self:flex-start;margin-top:5px;font-size:10px;
+  font-weight:700;border-radius:8px;background:#e9f2f7;color:#45647b;padding:3px 8px}
+.target-form{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.target-form>label,.price-filter>label{display:flex;flex-direction:column;gap:6px;font-size:11px;color:#718196}
+.target-form select,.target-form input,.price-filter select{width:100%;min-width:0}
+.iv-field{grid-column:1/-1;border:1px solid #e3e9ef;border-radius:9px;padding:12px}
+.iv-field legend{font-size:11px;color:#718196}
+.iv-checks{display:flex;flex-wrap:wrap;gap:12px}
+.iv-check{display:flex;align-items:center;gap:5px;font-size:12px;color:#33485c}
+.iv-check input{accent-color:#238454}
+.target-form>.hint{grid-column:1/-1;margin:0}
+.target-form>button{justify-self:start}
+.price-filter{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}
+.price-scroll{max-height:480px}
+.price-historical{display:block;margin-top:4px;color:#8c9bab;font-size:10px}
+#team-coverage{font-size:12px;color:#66788b}
+#team-coverage .entry{margin-bottom:5px}
+@media(max-width:600px){.team-grid{grid-template-columns:1fr}
+.target-form{grid-template-columns:1fr 1fr}.price-filter{grid-template-columns:1fr}}

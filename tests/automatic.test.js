@@ -30,3 +30,19 @@ test('la aplicación intenta captura directa y fallback del monitor',()=>{
   assert.match(capture,/types:\['screen'\]/);
   assert.match(capture,/locateWindow/);
 });
+
+test('team and ideal-price views are wired to SQLite without removing the original radar',()=>{
+  const html=read('src/ui/index.html');
+  const main=read('src/main.js');
+  const preload=read('src/preload.js');
+  const overlay=read('src/ui/overlay.js');
+  const team=read('src/team.js');
+  assert.match(html,/data-page="equipo"/);
+  assert.match(html,/data-page="precios"/);
+  assert.match(main,/ipcMain\.handle\('radar:saveTeam'/);
+  assert.match(main,/storage\.targetPrices\(profiles\)/);
+  assert.match(preload,/saveTeam:/);
+  assert.match(overlay,/Fuera de presupuesto|reasonText/);
+  assert.doesNotMatch(team,/['"]Gengar['"]/);
+  assert.doesNotMatch(main,/overlay\?\.hide\(\);\s*setStatus\(\{state:'leyendo'/);
+});

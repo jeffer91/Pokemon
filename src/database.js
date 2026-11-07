@@ -4,9 +4,10 @@ const path = require('node:path');
 const fs = require('node:fs');
 const crypto = require('node:crypto');
 const {validListing, researchSuggestions} = require('./market');
+const {validateOverrides,priceSummary}=require('./team');
 
 const DEFAULT_SETTINGS = {listingFee:null, captureEnabled:false, reserveRatio:0.30,
-  overlayX:0, overlayY:0, overlayScale:1, consentConfirmed:false, captureEngine:null};
+  overlayX:0, overlayY:0, overlayScale:1, consentConfirmed:false, captureEngine:null, teamOverrides:{}};
 function identity(p) { return crypto.createHash('sha256').update(JSON.stringify([p.species.toLowerCase(),p.level,p.nature.toLowerCase(),p.sex||'?',p.price,...p.ivs])).digest('hex'); }
 function openDatabase(folder) {
   fs.mkdirSync(folder,{recursive:true});
@@ -14,7 +15,7 @@ function openDatabase(folder) {
   const db = new DatabaseSync(filename);
   db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=3000;');
   const version=db.prepare('PRAGMA user_version').get().user_version;
-  if(version > 3) throw new Error('Esta base requiere una versión más reciente de PokéRadar.');
+  if(version > 4) throw new Error('Esta base requiere una versión más reciente de PokéRadar.');
   if(version < 1) {
     db.exec(`BEGIN IMMEDIATE;
       CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -76,6 +77,15 @@ function openDatabase(folder) {
       db.exec('COMMIT');
     }catch(error){db.exec('ROLLBACK');throw error;}
   }
+  if(version < 4){
+    // Earlier "verified" flags could result from quickly repeated identical images.
+    // Preserve all records while reclassifying prices until independently reread.
+    db.exec('BEGIN IMMEDIATE');
+    try{
+      db.exec('UPDATE listings SET verified=0; PRAGMA user_version=4;');
+      db.exec('COMMIT');
+    }catch(error){db.exec('ROLLBACK');throw error;}
+  }
   const check=db.prepare('PRAGMA quick_check').get();
   if(Object.values(check)[0] !== 'ok') throw new Error('La base SQLite no superó la comprobación de integridad.');
   const setStmt=db.prepare('INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value');
@@ -85,6 +95,7 @@ function openDatabase(folder) {
     for(const [k,v] of Object.entries(changes)) {
       if(!allowed.includes(k)) throw Error('Parámetro no permitido: '+k);
       if(k==='listingFee' && v !== null && (!Number.isSafeInteger(v)||v<0||v>25000)) throw Error('Cuota GTL fuera de rango');
+      if(k==='teamOverrides')validateOverrides(v);
       if(k==='captureEngine' && v!==null && !['electron-window','electron-win32','electron-visual','win-gdi','win-print'].includes(v)) throw Error('Motor de captura inválido');
       if(['overlayX','overlayY'].includes(k) && (!Number.isFinite(v)||Math.abs(v)>1000)) throw Error('Posición incorrecta');
       if(k==='overlayScale' && (!Number.isFinite(v)||v<0.6||v>1.6)) throw Error('Escala incorrecta');
@@ -118,7 +129,7 @@ function openDatabase(folder) {
     (seen_at,image_hash,search_context,sort_order,page_number,valid_count,partial_count,ocr_word_count)
     VALUES(?,?,?,?,?,?,?,?)`);
   const addPartial=db.prepare(`INSERT INTO partial_reads(scan_id,rank_number,reason,fields_json) VALUES(?,?,?,?)`);
-  const confirmListing=db.prepare('UPDATE listings SET verified=1 WHERE fingerprint=? AND seen_count>=2');
+  const confirmListing=db.prepare('UPDATE listings SET verified=1 WHERE fingerprint=? AND seen_count>=2 AND last_seen-first_seen>=60000');
   let lastBatchHash='',lastBatchAt=0;
   function recordMarketScan({rows=[],partialRows=[],context='general',sort='unknown',page=null,wordCount=0,imageHash=''}={}){
     const now=Date.now(), valid=rows.filter(validListing);
@@ -175,7 +186,21 @@ function openDatabase(folder) {
     const row=db.prepare('SELECT amount,seen_at FROM balance_observations ORDER BY id DESC LIMIT 1').get();
     return row && Date.now()-row.seen_at<=maxAge?row.amount:null;
   }
-  function recent() {return db.prepare('SELECT species,level,nature,price,ivs_json,last_seen,seen_count,verified FROM listings ORDER BY last_seen DESC LIMIT 30').all()
+  const pricesForSpecies=db.prepare(`SELECT species,level,nature,sex,price,ivs_json,last_seen,seen_count,verified
+    FROM listings WHERE species=? COLLATE NOCASE AND last_seen>=?
+    ORDER BY last_seen DESC LIMIT 500`);
+  function targetPrices(profiles){
+    const cutoff=Date.now()-7*86400000;
+    return profiles.map(profile=>{
+      const rows=pricesForSpecies.all(profile.searchSpecies,cutoff);
+      const direct=priceSummary(rows,profile,'direct');
+      const breeding=priceSummary(rows,profile,'breed');
+      return {id:profile.id,name:profile.name,searchSpecies:profile.searchSpecies,
+        direct,breeding,unverified:rows.filter(r=>r.verified!==1).length,
+        historicalQuote:profile.historicalQuote||null};
+    });
+  }
+  function recent() {return db.prepare('SELECT species,level,nature,sex,price,ivs_json,last_seen,seen_count,verified FROM listings ORDER BY last_seen DESC LIMIT 30').all()
     .map(r=>({...r,ivs:JSON.parse(r.ivs_json)}));}
   function history(){return db.prepare(`SELECT r.decision,r.reason,r.confidence,r.estimated_net,
     r.baseline,r.timestamp,l.species,l.level,l.price,l.verified
@@ -205,7 +230,7 @@ function openDatabase(folder) {
   async function saveBackup(){const dest=path.join(folder,'backups');fs.mkdirSync(dest,{recursive:true});
     const file=path.join(dest,`pokeradar-${new Date().toISOString().slice(0,10)}.sqlite`);
     if(!fs.existsSync(file)) await backup(db,file);return file;}
-  return {db,filename,settings:getSettings,applySettings,recordListings,recordMarketScan,candidates,recordRecommendation,
+  return {db,filename,settings:getSettings,applySettings,recordListings,recordMarketScan,candidates,targetPrices,recordRecommendation,
     recordBalance,latestBalance,recent,history,stats,summary,addTransaction,transactionHistory,saveBackup,close:()=>db.close()};
 }
 module.exports={openDatabase,identity,DEFAULT_SETTINGS};

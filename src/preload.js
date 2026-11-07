@@ -12,6 +12,8 @@ contextBridge.exposeInMainWorld('radar',{
   settings:changes=>ipcRenderer.invoke('radar:settings',changes),
   history:()=>ipcRenderer.invoke('radar:history'),
   recordTrade:trade=>ipcRenderer.invoke('radar:trade',trade),
+  team:()=>ipcRenderer.invoke('radar:team'),
+  saveTeam:overrides=>ipcRenderer.invoke('radar:saveTeam',overrides),
   minimize:()=>ipcRenderer.send('radar:minimize'),
   on:(event,callback)=>{
     if(!allowedEvents.has(event)||typeof callback!=='function')return ()=>{};

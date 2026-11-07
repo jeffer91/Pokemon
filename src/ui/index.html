@@ -13,8 +13,13 @@
     <div class="actions"><button id="play" class="play"><span aria-hidden="true">▶</span> Play</button><button id="stop" class="stop" disabled>■ Stop</button></div>
   </div>
   <nav aria-label="Secciones">
-    <button class="tab active" data-tab="radar">Radar</button><button class="tab" data-tab="buscar">Buscar</button>
-    <button class="tab" data-tab="historial">Historial</button><button class="tab" data-tab="diagnostico">Diagnóstico</button><button class="tab" data-tab="ajustes">Ajustes</button>
+    <button class="tab active" data-tab="radar">Radar</button>
+    <button class="tab" data-tab="equipo">Equipo ideal</button>
+    <button class="tab" data-tab="precios">Precios ideales</button>
+    <button class="tab" data-tab="buscar">Buscar</button>
+    <button class="tab" data-tab="historial">Historial</button>
+    <button class="tab" data-tab="diagnostico">Diagnóstico</button>
+    <button class="tab" data-tab="ajustes">Ajustes</button>
   </nav>
   <section class="page" data-page="radar">
     <div class="metrics">
@@ -24,10 +29,57 @@
     </div>
     <div class="panel">
       <div class="heading"><h2>Últimos anuncios</h2><span id="decisions">0</span></div>
-      <div class="scroll"><table><thead><tr><th>Pokémon</th><th>IV</th><th>Precio</th></tr></thead>
-      <tbody id="listings"><tr><td colspan="3">Sin datos todavía</td></tr></tbody></table></div>
+      <div class="scroll"><table><thead><tr><th>Pokémon</th><th>IV</th><th>IV/10</th><th>REV</th><th>CRI*</th><th>Precio</th></tr></thead>
+      <tbody id="listings"><tr><td colspan="6">Sin datos todavía</td></tr></tbody></table></div>
     </div>
     <div class="tip" id="radar-tip">La base se alimentará mientras revisas el GTL.</div>
+  </section>
+  <section class="page" data-page="equipo" hidden>
+    <div class="panel">
+      <div class="heading"><h2>Equipo ideal</h2><span>6 titulares · 6 suplentes</span></div>
+      <div class="hint">Sin Gengar ni evoluciones obligatorias por intercambio. Los ajustes provisionales están identificados.</div>
+      <h3 class="team-title">Titulares</h3><div id="team-starters" class="team-grid"></div>
+      <h3 class="team-title">Suplentes</h3><div id="team-bench" class="team-grid"></div>
+      <h3 class="team-title">Objetivo adicional</h3><div id="team-extra" class="team-grid"></div>
+    </div>
+    <div class="panel">
+      <div class="heading"><h2>Cobertura de tipos</h2><span id="team-coverage-count"></span></div>
+      <div id="team-coverage" class="tasks"></div>
+      <p class="hint">Las coincidencias de tipo no prohíben una alineación: muestran dónde revisar la complementariedad antes de una Liga.</p>
+    </div>
+    <div class="panel">
+      <div class="heading"><h2 id="target-title">Editar objetivo</h2><span id="target-meta"></span></div>
+      <form id="target-form" class="target-form">
+        <input type="hidden" id="target-id">
+        <label>Naturaleza <select id="target-nature"></select></label>
+        <label>Nivel preferido <input type="number" id="target-level" min="1" max="100" step="1" required></label>
+        <label>Progreso <select id="target-status">
+          <option value="pendiente">Pendiente</option>
+          <option value="cotizando">Cotizando</option>
+          <option value="criando">Criando</option>
+          <option value="propio">Ya lo tengo</option>
+        </select></label>
+        <fieldset class="iv-field"><legend>IV obligatorios (31)</legend><div id="target-ivs" class="iv-checks"></div></fieldset>
+        <p id="target-note" class="hint"></p>
+        <button type="submit" class="secondary">Guardar objetivo</button>
+      </form>
+      <p class="hint" id="target-feedback" role="status"></p>
+    </div>
+  </section>
+  <section class="page" data-page="precios" hidden>
+    <div class="panel">
+      <div class="heading"><h2>Base de precios ideales</h2><span>SQLite local</span></div>
+      <div class="price-filter">
+        <label>Pokémon <select id="price-target"><option value="all">Todos los objetivos</option></select></label>
+        <label>Búsqueda <select id="price-mode"><option value="direct">Compra directa</option><option value="breed">Crianza</option></select></label>
+      </div>
+      <p class="hint">Solo anuncios con naturaleza, IV, nivel y precio compatibles según el filtro. La habilidad no se confirma por OCR.</p>
+      <div class="scroll price-scroll">
+        <table><thead><tr><th>Pokémon</th><th>Más barato</th><th>Mediana</th><th>Muestras</th><th>Actualizado</th></tr></thead>
+        <tbody id="ideal-prices"></tbody></table>
+      </div>
+      <p class="hint" id="price-note">Los precios históricos del Sheets se muestran separados de los actuales.</p>
+    </div>
   </section>
   <section class="page" data-page="buscar" hidden>
     <div class="panel"><div class="heading"><h2>Búsquedas sugeridas</h2><span>GTL</span></div>

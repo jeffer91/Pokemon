@@ -32,17 +32,19 @@ function renderData(data){
   $('total').textContent=s.total||0;$('observations').textContent=s.observations||0;
   $('decisions').textContent=(s.decisions||0)+' decisiones';
   $('balance').textContent=currency(data.balance);
-  $('radar-tip').textContent=(s.trusted||0)+' verificados · '+(s.unverified||0)+
-    ' pendientes. Solo los verificados se usan para comparar precios.';
+  renderTeamData(data);
+  $('radar-tip').textContent=(s.trusted||0)+' precios verificados · '+(s.unverified||0)+
+    ' pendientes · REV sin nota cuando faltan comparables · CRI* indica potencial por IV, no compatibilidad de crianza.';
 
   const listings=$('listings');listings.replaceChildren();
   for(const row of (data.recent||[]).slice(0,8)){
     const tr=document.createElement('tr');
-    for(const value of [row.species+' · Nv. '+row.level,row.ivs?.filter(x=>x===31).length+'×31',currency(row.price)]){
+    for(const value of [row.species+' · Nv. '+row.level,row.ivs?.filter(x=>x===31).length+'×31',Number.isFinite(row.ivQuality)?row.ivQuality.toFixed(1)+'/10':'—',
+      Number.isFinite(row.revQuality)?row.revQuality.toFixed(1):'—',Number.isFinite(row.criQuality)?row.criQuality.toFixed(1):'—',currency(row.price)]){
       const td=document.createElement('td');td.textContent=value;tr.append(td);
     }listings.append(tr);
   }
-  if(!listings.childElementCount){const tr=document.createElement('tr'),td=document.createElement('td');td.colSpan=3;td.textContent='Todavía no hay anuncios.';tr.append(td);listings.append(tr);}
+  if(!listings.childElementCount){const tr=document.createElement('tr'),td=document.createElement('td');td.colSpan=6;td.textContent='Todavía no hay anuncios.';tr.append(td);listings.append(tr);}
   const tasks=$('suggestions');tasks.replaceChildren();
   for(const task of s.research||[]){
     const el=document.createElement('div');el.className='task';
@@ -171,3 +173,148 @@ $('copy-diag').addEventListener('click',async()=>{
   }catch(error){$('diag-feedback').textContent='No se pudo copiar el diagnóstico.';}
 });
 window.radar.getDiagnostics().then(renderDiagnostics).catch(()=>{});
+
+
+// Team and target-price views are read-only until the user deliberately saves a profile.
+const IV_LABELS=['PS','At','Def','AtEsp','DefEsp','Vel'];
+const NATURES=['','Fuerte','Huraña','Audaz','Firme','Pícara','Osada','Dócil','Plácida',
+  'Agitada','Floja','Miedosa','Activa','Seria','Alegre','Ingenua','Modesta',
+  'Afable','Mansa','Tímida','Alocada','Serena','Amable','Grosera','Cauta','Rara'];
+let selectedProfileId='starmie';
+let viewTeam=[],viewPrices=[];
+let uiTeamVersion='';
+const natureSelect=$('target-nature');
+for(const nature of NATURES){
+  const option=document.createElement('option');
+  option.value=nature;option.textContent=nature||'Sin definir';
+  natureSelect.append(option);
+}
+for(let i=0;i<6;i++){
+  const label=document.createElement('label');label.className='iv-check';
+  const input=document.createElement('input');input.type='checkbox';input.value=String(i);
+  const text=document.createElement('span');text.textContent=IV_LABELS[i]+' 31';
+  label.append(input,text);$('target-ivs').append(label);
+}
+function objectiveSummary(p){
+  const req=(p.ivRequired||[]).map(i=>IV_LABELS[i]+'31').join(' · ');
+  return [p.nature||'Naturaleza pendiente',req||'IV pendientes',
+    'Nv. '+p.level].join(' · ');
+}
+function chooseTarget(id){
+  const p=viewTeam.find(p=>p.id===id);
+  if(!p)return;
+  selectedProfileId=id;
+  $('target-id').value=id;
+  $('target-title').textContent=p.name+' · '+p.searchSpecies;
+  $('target-meta').textContent=p.role==='titular'?'Titular':
+    p.role==='suplente'?'Suplente':'Objetivo adicional';
+  $('target-nature').value=p.nature||'';
+  $('target-level').value=p.level;
+  $('target-status').value=p.status;
+  for(const check of $('target-ivs').querySelectorAll('input'))
+    check.checked=(p.ivRequired||[]).includes(Number(check.value));
+  const details=[];
+  if(p.breedMode==='genderless')details.push('Crianza: requiere Ditto; confirmar compatibilidad.');
+  if(p.breedMode==='baby')details.push('La fase bebé no cría: evolucionar primero.');
+  if(p.abilityNote)details.push(p.abilityNote);
+  if(p.provisional)details.push('Objetivo provisional; puede cambiarse.');
+  $('target-note').textContent=details.join(' ');
+  document.querySelectorAll('.team-card').forEach(button=>
+    button.classList.toggle('selected',button.dataset.id===id));
+}
+function drawTeam(profiles,cover){
+  const areas={titular:$('team-starters'),suplente:$('team-bench'),extra:$('team-extra')};
+  Object.values(areas).forEach(area=>area.replaceChildren());
+  for(const p of profiles){
+    const button=document.createElement('button');button.type='button';
+    button.className='team-card';button.dataset.id=p.id;
+    const title=document.createElement('strong');title.textContent=p.name;
+    const types=document.createElement('small');types.textContent=p.types.join(' / ');
+    const objective=document.createElement('small');objective.textContent=objectiveSummary(p);
+    const state=document.createElement('span');state.className='team-status';
+    state.textContent=p.provisional?'Propuesto':p.status==='propio'?'Propio':
+      p.status==='criando'?'En crianza':p.status==='cotizando'?'Cotizando':'Pendiente';
+    button.append(title,types,objective,state);
+    button.addEventListener('click',()=>chooseTarget(p.id));
+    areas[p.role]?.append(button);
+  }
+  chooseTarget(selectedProfileId);
+  const list=$('team-coverage');list.replaceChildren();
+  const shared=cover?.sharedTypes||[],weak=cover?.weaknesses||[];
+  $('team-coverage-count').textContent=(shared.length+weak.length)+' avisos';
+  for(const d of shared)list.append(itemNode('Tipo repetido · '+d.type,d.names.join(', ')));
+  for(const d of weak)list.append(itemNode('Debilidad compartida · '+d.type,d.names.join(', ')));
+  for(const r of cover?.rotations||[])
+    list.append(itemNode('Rotación sugerida · '+r.enter+' por '+r.out,
+      'Reduce '+r.improvement+' puntos de solapamiento de tipos; no cambia los titulares.'));
+  if(!list.childElementCount)list.textContent='Sin interferencias destacadas en titulares.';
+}
+function drawPrices(){
+  const mode=$('price-mode').value;
+  const target=$('price-target').value;
+  const body=$('ideal-prices');body.replaceChildren();
+  const items=viewPrices.filter(row=>target==='all'||row.id===target);
+  for(const row of items){
+    const summary=mode==='breed'?row.breeding:row.direct;
+    const tr=document.createElement('tr');
+    const name=document.createElement('td');
+    const nameTitle=document.createElement('strong');
+    nameTitle.textContent=row.name+' · '+row.searchSpecies;
+    const note=document.createElement('small');note.className='price-historical';
+    note.textContent=row.historicalQuote?
+      'Sheets histórico '+currency(row.historicalQuote):'Sin cotización histórica';
+    name.append(nameTitle,note);
+    const fields=[
+      currency(summary.min),currency(summary.median),String(summary.samples),
+      summary.lastSeen?stamp(summary.lastSeen):'—'
+    ];
+    tr.append(name);
+    for(const value of fields){
+      const td=document.createElement('td');td.textContent=value;tr.append(td);
+    }
+    body.append(tr);
+  }
+  if(!items.length){
+    const tr=document.createElement('tr'),td=document.createElement('td');
+    td.colSpan=5;td.textContent='Todavía no hay objetivos disponibles.';
+    tr.append(td);body.append(tr);
+  }
+  const pending=items.reduce((sum,row)=>sum+(row.unverified||0),0);
+  $('price-note').textContent='Solo comparables verificados · '+pending+
+    ' registros recientes pendientes. Sheets es histórico, no mercado en vivo.';
+}
+function renderTeamData(data){
+  if(!Array.isArray(data.profiles)||!Array.isArray(data.prices))return;
+  viewTeam=data.profiles;viewPrices=data.prices;
+  const signature=JSON.stringify([viewTeam,data.coverage]);
+  if(signature!==uiTeamVersion){
+    uiTeamVersion=signature;drawTeam(viewTeam,data.coverage);
+    const selection=$('price-target'),value=selection.value;
+    selection.replaceChildren();
+    for(const p of [{id:'all',name:'Todos los objetivos'},...viewTeam]){
+      const option=document.createElement('option');
+      option.value=p.id;option.textContent=p.name;selection.append(option);
+    }
+    selection.value=viewTeam.some(p=>p.id===value)||value==='all'?value:'all';
+  }
+  drawPrices();
+}
+$('price-target').addEventListener('change',drawPrices);
+$('price-mode').addEventListener('change',drawPrices);
+$('target-form').addEventListener('submit',async event=>{
+  event.preventDefault();
+  const id=$('target-id').value;
+  if(!viewTeam.some(p=>p.id===id))return;
+  const nature=$('target-nature').value||null;
+  const ivRequired=[...$('target-ivs').querySelectorAll('input:checked')].map(el=>Number(el.value));
+  const update={nature,ivRequired,level:Number($('target-level').value),
+    status:$('target-status').value};
+  const next={...(current.settings.teamOverrides||{}),[id]:update};
+  const button=$('target-form').querySelector('button[type=submit]');
+  button.disabled=true;$('target-feedback').textContent='Guardando...';
+  try{
+    await window.radar.saveTeam(next);
+    $('target-feedback').textContent='Objetivo actualizado.';
+  }catch(error){$('target-feedback').textContent='No se pudo guardar: '+String(error.message||error);}
+  finally{button.disabled=false;}
+});
