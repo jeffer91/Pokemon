@@ -32,6 +32,8 @@ function renderData(data){
   $('total').textContent=s.total||0;$('observations').textContent=s.observations||0;
   $('decisions').textContent=(s.decisions||0)+' decisiones';
   $('balance').textContent=currency(data.balance);
+  $('radar-tip').textContent=(s.trusted||0)+' verificados · '+(s.unverified||0)+
+    ' pendientes. Solo los verificados se usan para comparar precios.';
 
   const listings=$('listings');listings.replaceChildren();
   for(const row of (data.recent||[]).slice(0,8)){
@@ -50,9 +52,19 @@ function renderData(data){
   }
   if(!tasks.childElementCount)tasks.textContent='Sin búsquedas pendientes.';
   const history=$('history');history.replaceChildren();
-  for(const h of (data.history||[]).slice(0,30))history.append(itemNode(
-    (h.decision==='COMPRAR'?'COMPRAR':'NO COMPRAR')+' · '+stamp(h.timestamp),
-    currency(h.estimated_net)+' netos estimados · '+h.reason));
+  const reasons={
+    RESERVA_30_POR_CIENTO:'Supera tu presupuesto disponible',
+    MARGEN_INSUFICIENTE:'Margen insuficiente',
+    DESCUENTO_Y_MARGEN:'Precio favorable según comparables'
+  };
+  for(const h of (data.history||[]).slice(0,30)){
+    const species=h.species||'Pokémon sin identificar';
+    const price=Number.isSafeInteger(h.price)?currency(h.price):'Precio no disponible';
+    const detail=(reasons[h.reason]||h.reason||'Sin motivo')+
+      (Number.isSafeInteger(h.estimated_net)?' · Neto estimado: '+currency(h.estimated_net):'');
+    history.append(itemNode((h.decision==='COMPRAR'?'COMPRAR':'NO COMPRAR')+
+      ' · '+species+' · '+price,detail+' · '+stamp(h.timestamp)));
+  }
   if(!history.childElementCount)history.textContent='Aún no hay decisiones.';
   const trades=$('trades');trades.replaceChildren();
   for(const t of (data.trades||[]).slice(0,30))trades.append(itemNode(

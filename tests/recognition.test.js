@@ -84,3 +84,59 @@ test('unreliable prices are quarantined as partial reads, not inserted as reliab
   assert.equal(result.partialRows.length,1);
   assert.equal(result.partialRows[0].priceReliable,false);
 });
+
+test('interpreta 10 filas en coordenadas del panel dentro de un monitor completo',()=>{
+  const panel={x:389,y:150,width:1150,height:782};
+  const crop={x:389,y:150+Math.round(.132*1150),
+    width:1150,height:Math.round(.48*1150),fullWidth:1917,fullHeight:1013};
+  const rows=[
+    ['Gardevoir',69,'timida',[31,1,31,22,16,2],44444],
+    ['Cranidos',34,'serena',[18,4,31,20,30,1],6000],
+    ['Ditto',11,'docil',[10,11,25,14,10,24],5998],
+    ['Ditto',11,'serena',[1,1,27,8,26,31],12000],
+    ['Growlithe',39,'seria',[5,13,30,31,22,27],10000],
+    ['Deino',31,'alegre',[4,31,18,2,28,26],8500],
+    ['Rampardos',55,'alegre',[1,31,23,11,31,10],30000],
+    ['Hypno',65,'fuerte',[25,31,19,22,31,18],30000],
+    ['Ditto',11,'timida',[20,3,13,23,28,5],5998],
+    ['Oshawott',29,'grosera',[15,11,19,28,10,23],9999]
+  ];
+  const words=[];
+  function text(t,x,y,conf=95){
+    const px=panel.x+x*panel.width-crop.x,py=panel.y+y*panel.width-crop.y;
+    words.push({text:String(t),confidence:conf,
+      bbox:{x0:px-4,x1:px+4,y0:py-4,y1:py+4}});
+  }
+  rows.forEach(([species,level,nature,ivs,price],i)=>{
+    const y=.18+i*.042;
+    [['Nv.',.102],[level,.135],[species,.203],[nature,.316],
+      ['$'+price.toLocaleString('de-DE'),.594],['Comprar',.925]]
+      .forEach(([v,x])=>text(v,x,y));
+    ivs.forEach((v,j)=>text(v,.368+j*.0335,y));
+  });
+  const result=parseScreen({words},crop.width,crop.height,
+    {panel,crop,gtlConfirmed:true});
+  assert.equal(result.rows.length,10);
+  assert.equal(result.partialRows.length,0);
+  assert.deepEqual(result.rows[0].ivs,[31,1,31,22,16,2]);
+  assert.equal(result.rows[9].price,9999);
+  assert.equal(result.layout.kind,'panel');
+});
+test('la naturaleza ilegible nunca entra en precios comparables',()=>{
+  const panel={x:389,y:150,width:1150,height:782};
+  const crop={x:389,y:300,width:1150,height:552,fullWidth:1917,fullHeight:1013};
+  const words=[];
+  function text(t,x,y){
+    const px=panel.x+x*panel.width-crop.x,py=panel.y+y*panel.width-crop.y;
+    words.push({text:String(t),confidence:95,
+      bbox:{x0:px-3,x1:px+3,y0:py-3,y1:py+3}});
+  }
+  text('Nv.',.10,.18);text(11,.135,.18);text('Ditto',.20,.18);
+  text('inventada',.315,.18);text('$6000',.592,.18);
+  [1,2,3,4,5,6].forEach((v,j)=>text(v,.368+j*.0335,.18));
+  const result=parseScreen({words},crop.width,crop.height,
+    {panel,crop,gtlConfirmed:true});
+  assert.equal(result.rows.length,0);
+  assert.equal(result.partialRows.length,1);
+  assert.equal(result.partialRows[0].missing,'NATURALEZA');
+});

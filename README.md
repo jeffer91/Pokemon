@@ -100,3 +100,15 @@ Los motores 4 y 5 son más costosos y solo se utilizan continuamente si una prue
 **Windows Graphics Capture y DXGI Desktop Duplication no están implementados como backends nativos** porque requieren adaptadores compilados adicionales: no se presentan como pruebas exitosas ni se sustituyen silenciosamente. La versión 0.4.0 integra cinco estrategias funcionalmente distintas compatibles con los componentes ya existentes, sin añadir archivos al repositorio.
 
 Cuando falla la captura, sigue apareciendo el código exacto. Ningún motor puede garantizar una imagen de un juego tapado por otra aplicación: los resultados se comprueban en tu Windows 11. La aplicación no automatiza clics ni compras. El informe copiado no incluye píxeles ni nombres de otras ventanas.
+
+## v0.4.1 — Estabilización de la captura GTL y calidad de referencias
+
+- El motor visual mantiene la captura de pantalla cuando se cierra o se oculta el GTL. `VIS-IDLE` es un estado normal, no un error de captura. Los motores en espera no registran automáticamente `CAP-NO-ENGINE`.
+- El panel del GTL se detecta por su franja de encabezado azul grisáceo en cualquier lugar del monitor; su posición real determina el recorte OCR y las coordenadas del indicador flotante. No se aplica una rejilla de pantalla de juego a imágenes de monitor completo.
+- El OCR usa columnas y filas relativas al panel. Los valores con confianza insuficiente, IV fuera de rango o naturalezas desconocidas se guardan exclusivamente como lecturas parciales.
+- La lectura de sexo examina solo los colores del pequeño glifo de género, sin considerar los sprites. Si no es confiable, se mantiene como desconocido; no puede emitirse COMPRAR para sexo desconocido.
+- SQLite migra de esquema 2 a 3 sin borrar el historial. Las filas históricas quedan inicialmente como no verificadas y **no se usan como comparables**. Una oferta OCR con datos válidos debe confirmarse en dos lecturas separadas por la ventana antiduplicados para utilizar su precio en evaluaciones.
+- El Historial muestra Pokémon, precio y razón de la decisión. Las evaluaciones idénticas de una oferta no se insertan repetidamente durante una hora.
+- La app continúa sin comprar ni manipular el juego. El tiempo de OCR inferior a un segundo y 10/10 anuncios correctos no pueden garantizarse sin pruebas en Windows 11.
+
+**Prueba recomendada:** abre PokéMMO con el GTL visible, pulsa Play, recorre dos páginas lentamente, vuelve a la primera tras unos segundos, entra a Diagnóstico y pulsa Copiar diagnóstico. Debe señalar captura válida, GTL localizado, cantidad de filas OCR y confirmaciones en SQLite. Cambiar a otra ventana no debe contarse como avería de captura.

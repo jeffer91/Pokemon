@@ -71,7 +71,7 @@ test('never selects an unrelated monitor when several displays are available',as
       getDisplayMatching:()=>({id:11,bounds,scaleFactor:1})},
     locateWindow:async()=>rect,inspectThumbnail:inspect
   });
-  assert.equal((await api.capture()).code,'CAP-NO-ENGINE');
+  assert.equal((await api.capture()).code,'CAP-WAIT-GTL');
 });
 
 test('compares all five independent capture engines, then selects GTL evidence',async()=>{
@@ -84,7 +84,8 @@ test('compares all five independent capture engines, then selects GTL evidence',
     screen:{getAllDisplays:()=>[{id:11,bounds,scaleFactor:1}],
       getDisplayMatching:()=>({id:11,bounds,scaleFactor:1})},
     locateWindow:async()=>rect,inspectThumbnail:fakeInspect,
-    nativeCapture:async mode=>{nativeCalls++;return {image:game,rect,code:'NATIVE-'+mode,detail:'OK'};}
+    nativeCapture:async mode=>{nativeCalls++;return {image:game,rect,code:'NATIVE-'+mode,detail:'OK'};},
+    locateGtlPanel:frame=>frame===display?{x:20,y:30,width:900,height:600}:null
   });
   const result=await api.probeAll();
   assert.equal(result.engines.length,5);
@@ -120,4 +121,36 @@ test('selected capture engine is reused without continuously launching all engin
   for(let i=0;i<4;i++)assert.equal((await api.capture()).via,'electron-window');
   assert.equal(nativeCalls,2);
   assert.ok(windowCalls>=5);
+});
+
+test('visual capture remains healthy when leaving GTL',async()=>{
+  const monitor=image(),display={id:11,bounds,scaleFactor:1};
+  let isGtl=true;
+  const api=createGameCapture({
+    desktopCapturer:{getSources:async opts=>opts.types[0]==='window'?[]:
+      [{display_id:'11',thumbnail:monitor}]},
+    screen:{getAllDisplays:()=>[display],getDisplayMatching:()=>display},
+    locateWindow:async()=>null,inspectThumbnail:inspect,
+    locateGtlPanel:()=>isGtl?{x:30,y:40,width:900,height:600}:null
+  });
+  const first=await api.capture();
+  assert.equal(first.code,'VIS-GTL');
+  isGtl=false;
+  const idle=await api.capture();
+  assert.equal(idle.code,'VIS-IDLE');
+  assert.equal(idle.visibleGtl,false);
+  assert.ok(idle.image);
+});
+test('available monitor without identified GTL waits, without inventing a capture failure',async()=>{
+  const display={id:11,bounds,scaleFactor:1};
+  const api=createGameCapture({
+    desktopCapturer:{getSources:async opts=>opts.types[0]==='window'?[]:
+      [{display_id:'11',thumbnail:image()}]},
+    screen:{getAllDisplays:()=>[display],getDisplayMatching:()=>display},
+    locateWindow:async()=>null,inspectThumbnail:inspect,
+    locateGtlPanel:()=>null
+  });
+  const response=await api.capture();
+  assert.equal(response.code,'CAP-WAIT-GTL');
+  assert.equal(response.waiting,true);
 });

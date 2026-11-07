@@ -68,3 +68,15 @@ test('budget exclusion can reject a partially read listing safely',()=>{
   assert.equal(evaluate({price:75000,ivs:[null]},[],{balance:100000}).reason,'RESERVA_30_POR_CIENTO');
   assert.equal(evaluate({price:12000,ivs:[null]},[],{balance:100000}).decision,'SILENCIO');
 });
+
+test('un sexo desconocido no genera recomendaciones positivas de reventa',()=>{
+  const row=pokemon(21000,{fingerprint:'target',sex:'?'});
+  const values=[28000,29000,30000,29000,31000,30000,28000,30000,32000,
+    29000,28000,30000,30000,31000,29000];
+  const result=evaluate(row,samples(values),{balance:100000,now});
+  assert.equal(result.decision,'SILENCIO');
+  assert.equal(result.reason,'SEXO_NO_VERIFICADO');
+});
+test('rechaza naturalezas inexistentes aunque tengan precios e IV válidos',()=>{
+  assert.equal(validListing(pokemon(20000,{nature:'inventada'})),false);
+});

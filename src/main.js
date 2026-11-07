@@ -7,7 +7,7 @@ const {evaluate}=require('./market');
 const {createRecognizer}=require('./recognition');
 const {locateWindow,captureNative}=require('./window-locator');
 const {nextDelay,region,shouldCheckHeader}=require('./scan-policy');
-const {inspectThumbnail}=require('./frame-health');
+const {inspectThumbnail,locateGtlPanel,inferGtlSexes}=require('./frame-health');
 const {createDiagnostics}=require('./diagnostics');
 const {createGameCapture}=require('./capture-source');
 
@@ -82,9 +82,18 @@ async function showResults(rows,version,layout=null){
   const scale=1; // Automatic positioning; previous manually stored offsets are ignored.
   const width=Math.round(156*scale);
   const auto=layout && Number.isFinite(layout.firstRowTopNorm) ? layout : null;
-  const step=Math.max(25,Math.round(game.height*(auto?.stepNorm||.0455)));
-  const x=Math.round(game.x+game.width*(auto?.overlayXNorm||.810));
-  const y=Math.round(game.y+game.height*(auto?.firstRowTopNorm||.311));
+  const pixel=layout?.kind==='panel' && layout.panel && layout.frameWidth>0 && layout.frameHeight>0?
+    layout:null;
+  const step=pixel?
+    Math.max(24,Math.round(pixel.stepUnits*pixel.panel.width*game.height/pixel.frameHeight)):
+    Math.max(25,Math.round(game.height*(auto?.stepNorm||.0455)));
+  const x=pixel?
+    Math.round(game.x+(pixel.panel.x+pixel.panel.width*pixel.rightUnits)*game.width/pixel.frameWidth):
+    Math.round(game.x+game.width*(auto?.overlayXNorm||.810));
+  const y=pixel?
+    Math.round(game.y+(pixel.panel.y+pixel.panel.width*(pixel.firstRowUnits-pixel.stepUnits/2))*
+      game.height/pixel.frameHeight):
+    Math.round(game.y+game.height*(auto?.firstRowTopNorm||.311));
   const work=screen.getDisplayMatching(game).workArea;
   const bounds={
     x:Math.max(work.x,Math.min(work.x+work.width-width,x)),
@@ -126,6 +135,13 @@ async function tick(){
     if(!sessionActive||version!==sessionVersion)return;
     if(!capture?.image){
       mode='idle';headerHash='';tableHash='';lastTableCheckedAt=0;
+      const waiting=!!capture?.waiting;
+      if(waiting){
+        track('capture','warn',capture.code||'CAP-WAIT',capture.detail||'Esperando pantalla visible');
+        track('gtl','pending','GTL-000','Esperando el mercado');
+        setStatus({state:'esperando',message:'Esperando el GTL visible',recognized:0});
+        await showCompact('En espera');return;
+      }
       const code=capture?.code||'CAP-UNKNOWN';
       track('window',capture?.windowFound?'ok':'warn',
         capture?.windowFound?'WIN-OK':'WIN-001',
@@ -147,10 +163,13 @@ async function tick(){
     track('capture','ok',capture.code,
       size.width+' × '+size.height+' píxeles · '+capture.via);
     diagnostics?.setEngines(captureAgent.snapshot());
-    let visibleGtl=health.gtl;
+    const panel=locateGtlPanel(image);
+    let visibleGtl=!!panel;
+    if(capture.via==='electron-visual' && !visibleGtl)
+      track('gtl','pending','GTL-OCULTO','Monitor captado; GTL no visible');
     // Pixel geometry detects the GTL before OCR, even when titles are unreadable.
     // Do not launch CPU-heavy OCR during ordinary gameplay (score is near zero).
-    if(!visibleGtl && mode!=='gtl' && health.score>=4){
+    if(!visibleGtl && capture.via!=='electron-visual' && mode!=='gtl' && health.score>=4){
       stage='ocr';
       if(Date.now()-startedAt<3500){
         track('gtl','pending','GTL-000','Buscando Servidor de Comercio');
@@ -171,14 +190,14 @@ async function tick(){
     if(!sessionActive||version!==sessionVersion)return;
     if(!visibleGtl){
       mode='idle';tableHash='';lastTableCheckedAt=0;
-      track('gtl','warn','GTL-000','Pantalla captada; GTL no detectado');
+      track('gtl','pending','GTL-OCULTO','Pantalla captada; GTL no visible');
       track('ocr','pending','OCR-000','Esperando anuncios');
       setStatus({state:'capturada',message:'Pantalla captada · esperando GTL',recognized:0});
       await showCompact('Captada');return;
     }
     const firstVisit=mode!=='gtl';
     mode='gtl';
-    track('gtl','ok','GTL-OK','Servidor de Comercio visible ('+health.score+'/10 referencias)');
+    track('gtl','ok','GTL-OK',panel?'GTL localizado por geometría ('+Math.round(panel.confidence*100)+'%)':'GTL detectado por OCR');
     if(firstVisit){
       tableHash='';lastTableCheckedAt=0;
       setStatus({state:'buscando',message:'GTL detectado. Preparando lectura.',recognized:0});
@@ -193,8 +212,18 @@ async function tick(){
       recognizer=await createRecognizer();
       if(!sessionActive||version!==sessionVersion)return;
     }
-    const rect=region(size.width,size.height,'market');
-    const market=image.crop(rect).toPNG(),fp=imageHash(market),now=Date.now();
+    // Use the actual GTL panel, not fixed coordinates relative to an entire monitor.
+    const rect=panel?{
+      x:panel.x,
+      y:panel.y+Math.round(panel.width*.132),
+      width:panel.width,
+      height:Math.min(size.height-panel.y-Math.round(panel.width*.132),
+        Math.round(panel.width*.48)),
+      fullWidth:size.width,fullHeight:size.height
+    }: {...region(size.width,size.height,'market'),fullWidth:size.width,fullHeight:size.height};
+    if(rect.height<180||rect.width<450)throw Error('La región del GTL es demasiado pequeña');
+    const market=image.crop({x:rect.x,y:rect.y,width:rect.width,height:rect.height}).toPNG();
+    const fp=imageHash(market),now=Date.now();
     if(!shouldCheckHeader(fp,tableHash,lastTableCheckedAt,now,8000))return;
     tableHash=fp;lastTableCheckedAt=now;
     // Clear out-of-date recommendations before starting an OCR pass.
@@ -210,8 +239,9 @@ async function tick(){
     }
     const ocrStart=performance.now();
     const res=await recognizer.analyze(market,rect.width,rect.height,{
-      gtlConfirmed:health.gtl,
-      crop:{x:rect.x,y:rect.y,fullWidth:size.width,fullHeight:size.height}
+      gtlConfirmed:visibleGtl,
+      panel:panel||undefined,
+      crop:rect
     });
     ocrFailures=0;
     if(!sessionActive||version!==sessionVersion)return;
@@ -221,7 +251,15 @@ async function tick(){
       setStatus({state:'investigando',message:'GTL detectado · ajustando filtros',recognized:0,latency:ocrTime});
       await showCompact('Filtros GTL');return;
     }
-    const rows=res.rows||[],partials=res.partialRows||[],balance=storage.latestBalance();
+    const inferred=panel&&res.grid?inferGtlSexes(image,panel,res.grid):null;
+    const enrichSex=row=>{
+      const guess=inferred?.[row.rank-1];
+      return {...row,sex:guess&&guess!=='?'?guess:
+        (String(row.species||'').toLowerCase()==='ditto'?'N':row.sex||'?')};
+    };
+    const rows=(res.rows||[]).map(enrichSex);
+    const partials=(res.partialRows||[]).map(enrichSex);
+    const balance=storage.latestBalance();
     emptyReads=rows.length?0:emptyReads+1;
     track('ocr',rows.length?'ok':emptyReads>=3?'error':'warn',rows.length?'OCR-OK':'OCR-001',
       rows.length+'/10 completos; '+partials.length+' parciales; '+(res.wordCount||0)+' palabras',ocrTime);
@@ -266,7 +304,15 @@ async function tick(){
       const fresh=await getGameSource(true);
       if(!fresh?.image)return showCompact('GTL actualizado');
       const bounds=fresh.image.getSize();
-      const check=imageHash(cropped(fresh.image,bounds.width,bounds.height,'market'));
+      const freshPanel=locateGtlPanel(fresh.image);
+      const freshRect=freshPanel?{
+        x:freshPanel.x,y:freshPanel.y+Math.round(freshPanel.width*.132),
+        width:freshPanel.width,
+        height:Math.min(bounds.height-freshPanel.y-Math.round(freshPanel.width*.132),
+          Math.round(freshPanel.width*.48))
+      }:region(bounds.width,bounds.height,'market');
+      const check=freshRect.height>0?
+        imageHash(fresh.image.crop(freshRect).toPNG()):'NO-GTL';
       if(check!==fp){
         tableHash='';lastTableCheckedAt=0;
         await showCompact('GTL actualizado');
@@ -381,7 +427,7 @@ app.whenReady().then(async()=>{
   if(storage.settings().captureEnabled)storage.applySettings({captureEnabled:false});
   diagnostics=createDiagnostics(app.getPath('userData'));
   captureAgent=createGameCapture({desktopCapturer,screen,locateWindow,inspectThumbnail,
-    nativeCapture:mode=>captureNative(mode,nativeImage)});
+    nativeCapture:mode=>captureNative(mode,nativeImage),locateGtlPanel});
   captureAgent.preferEngine(storage.settings().captureEngine);
   diagnostics.setEngines(captureAgent.snapshot());
   track('database','ok','DB-OK','SQLite abierto y verificado');

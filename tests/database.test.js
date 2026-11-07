@@ -36,7 +36,7 @@ test('SQLite v2 retains verified listings and records partial OCR without mixing
   const scan=db.recordMarketScan({rows:[{...p(),rank:4}],partialRows:[{rank:5,species:'Gible',price:12000,ivs:[31,null,null,null,null,null],missing:'IV_INCOMPLETOS'}],context:'GTL|newest',sort:'newest',wordCount:65,imageHash:'abc'});
   assert.equal(scan.saved,1);assert.equal(scan.partial,1);
   assert.equal(db.summary().total,1);assert.equal(db.summary().scans,1);assert.equal(db.summary().partials,1);
-  assert.equal(db.db.prepare('PRAGMA user_version').get().user_version,2);
+  assert.equal(db.db.prepare('PRAGMA user_version').get().user_version,3);
   db.close();fs.rmSync(folder,{recursive:true,force:true});
 });
 
@@ -49,5 +49,37 @@ test('guarda el motor de captura seleccionado sin cambiar el esquema SQLite',()=
   db.close();
   db=openDatabase(dir);
   assert.equal(db.settings().captureEngine,'electron-visual');
+  db.close();fs.rmSync(dir,{recursive:true,force:true});
+});
+
+test('solo la segunda lectura OCR consistente habilita comparables',()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'radar-verified-'));
+  const db=openDatabase(dir);
+  const row={...p(),ocrReliable:true,rank:1};
+  db.recordMarketScan({rows:[row],context:'GTL',imageHash:'first'});
+  assert.equal(db.summary().trusted,0);
+  assert.equal(db.candidates('Dratini').length,0);
+  // A different visit/scan must be separated from the first batch.
+  // Force the existing dedup window to pass by waiting through a stubbed clock.
+  const original=Date.now;
+  try{
+    const future=original()+11000;
+    Date.now=()=>future;
+    db.recordMarketScan({rows:[row],context:'GTL',imageHash:'second'});
+    assert.equal(db.summary().trusted,1);
+    assert.equal(db.candidates('Dratini').length,1);
+  }finally{Date.now=original;}
+  db.close();fs.rmSync(dir,{recursive:true,force:true});
+});
+test('el historial muestra especie y precio sin multiplicar decisiones iguales',()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'radar-recommend-'));
+  const db=openDatabase(dir),row=p();
+  db.recordListings([row],'general');
+  const ev={decision:'NO_COMPRAR',reason:'RESERVA_30_POR_CIENTO',confidence:1};
+  assert.equal(db.recordRecommendation(row,ev,'GTL'),true);
+  assert.equal(db.recordRecommendation(row,ev,'GTL'),false);
+  assert.equal(db.summary().decisions,1);
+  assert.equal(db.history()[0].species,'Dratini');
+  assert.equal(db.history()[0].price,21000);
   db.close();fs.rmSync(dir,{recursive:true,force:true});
 });

@@ -44,4 +44,87 @@ function inspectThumbnail(image){
   const small=image.resize({width:160,quality:'good'}),size=small.getSize();
   return inspectPixels(small.toBitmap(),size.width,size.height);
 }
-module.exports={inspectPixels,inspectThumbnail,PANEL_POINTS};
+
+// Find the blue-grey GTL title stripe anywhere within a monitor image.
+// Geometry is returned in ORIGINAL image pixels, not monitor-normalized coordinates.
+function locateGtlPanel(image){
+  if(!image||image.isEmpty())return null;
+  const img=image.resize({width:320,quality:'good'});
+  const {width,height}=img.getSize();
+  if(width<200||height<100)return null;
+  const bmp=img.toBitmap();
+  const isBlue=(x,y)=>{
+    const k=(y*width+x)*4;
+    const b=bmp[k],g=bmp[k+1],r=bmp[k+2],a=bmp[k+3];
+    return a>20&&r>=45&&r<=110&&g>=r+10&&b>=g+8&&b<=175;
+  };
+  let best=null;
+  // Search upper screen where the GTL heading appears. Do not depend on
+  // the size, position or native name of the PokeMMO window.
+  for(let y=Math.round(height*.09);y<Math.round(height*.34);y++){
+    let first=-1;
+    for(let x=0;x<=width;x++){
+      const match=x<width&&isBlue(x,y);
+      if(match&&first<0)first=x;
+      if(!match&&first>=0){
+        const span=x-first;
+        if(span>=width*.38&&span<=width*.88 &&
+          (!best||span>best.span||span===best.span&&y<best.y))
+          best={x:first,y,span};
+        first=-1;
+      }
+    }
+  }
+  if(!best)return null;
+  const scale=image.getSize().width/width;
+  const box={x:Math.round(best.x*scale),y:Math.round(best.y*scale),
+    width:Math.round(best.span*scale)};
+  // The title bar must also have continuity vertically; a game map or HUD
+  // colored similarly should not be treated as an actionable market.
+  const checkX=Math.min(width-2,best.x+Math.round(best.span*.5));
+  let consistency=0;
+  for(const delta of [0,2,4,6,8,10,12,14]){
+    const yy=best.y+delta;
+    if(yy<height&&isBlue(checkX,yy))consistency++;
+  }
+  if(consistency<4)return null;
+  box.height=Math.min(image.getSize().height-box.y,Math.round(box.width*.68));
+  if(box.height<box.width*.48)return null;
+  box.confidence=consistency/8;
+  return box;
+}
+
+
+// Read the pink/blue gender glyph ONLY in its dedicated cell above the badge.
+// Never use sprite colors or the blue listing diamond below the glyph.
+function inferGtlSexes(image,panel,grid){
+  const sexes=Array(10).fill('?');
+  if(!image||image.isEmpty()||!panel||!grid||!Number.isFinite(grid.top)||
+    !Number.isFinite(grid.step))return sexes;
+  const bounds=image.getSize(),W=panel.width;
+  for(let rank=0;rank<10;rank++){
+    const centerY=panel.y+(grid.top+rank*grid.step)*W;
+    const rect={
+      x:Math.round(panel.x+W*.019),
+      y:Math.round(centerY-W*.024),
+      width:Math.max(6,Math.round(W*.019)),
+      height:Math.max(6,Math.round(W*.018))
+    };
+    if(rect.x<0||rect.y<0||rect.x+rect.width>bounds.width||
+      rect.y+rect.height>bounds.height)continue;
+    let pixels;
+    try{pixels=image.crop(rect).toBitmap();}catch{continue;}
+    let male=0,female=0;
+    for(let j=0;j<pixels.length;j+=4){
+      const b=pixels[j],g=pixels[j+1],r=pixels[j+2],a=pixels[j+3];
+      if(a<32)continue;
+      if(b>=135&&g>=100&&r<=130&&b-r>=55&&g-r>=20)male++;
+      if(r>=155&&b>=110&&g<=135&&r-g>=55)female++;
+    }
+    if(male>=12&&male>female*2)sexes[rank]='M';
+    else if(female>=12&&female>male*2)sexes[rank]='F';
+  }
+  return sexes;
+}
+
+module.exports={inspectPixels,inspectThumbnail,locateGtlPanel,inferGtlSexes,PANEL_POINTS};

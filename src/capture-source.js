@@ -22,11 +22,11 @@ function cropFromDisplay(rect,bounds,size){
   return {x,y,width:w,height:h};
 }
 function createGameCapture({desktopCapturer,screen,locateWindow,inspectThumbnail,
-    nativeCapture=null,now=()=>Date.now()}){
+    nativeCapture=null,locateGtlPanel=()=>null,now=()=>Date.now()}){
   const order=Object.keys(ENGINE_LABELS);
   const records=new Map(order.map(id=>[id,{id,name:ENGINE_LABELS[id],state:'pending',
     code:'PENDIENTE',detail:'Sin probar',ms:null,frames:0,gtl:false,at:null}]));
-  let selected=null,lastRect=null,lastDebug=null,lastProbe=0,busy=null;
+  let selected=null,lastRect=null,lastDebug=null,lastProbe=0,busy=null,visualDisplayId=null;
   const cooldown=new Map();
   function health(image){
     try{
@@ -43,7 +43,8 @@ function createGameCapture({desktopCapturer,screen,locateWindow,inspectThumbnail
     const record={
       id,name:last.name,state:good?'ok':result.unsupported?'unsupported':'error',
       code:result.code||'CAP-UNKNOWN',detail:String(result.detail||'').slice(0,180),
-      ms:Math.round(elapsed),frames:good?1:0,gtl:!!h.gtl,score:h.score||0,
+      ms:Math.round(elapsed),frames:good?1:0,
+      gtl:good&&(result.visibleGtl===true||(result.visibleGtl!==false&&!!h.gtl)),score:h.score||0,
       panelRatio:Math.round(100*(h.panelRatio||0)),size:size?size.width+'×'+size.height:null,
       at:new Date().toISOString()
     };
@@ -96,18 +97,35 @@ function createGameCapture({desktopCapturer,screen,locateWindow,inspectThumbnail
         sources=await desktopCapturer.getSources({types:['screen'],thumbnailSize:
           {width:1920,height:1080}});
       }catch(e){return fail('VIS-ERROR',String(e.message||e));}
-      let best=null;
+      const candidates=[];
       for(const src of sources){
         const h=health(src.thumbnail);
-        if(!h.valid||!h.gtl)continue;
+        if(!h.valid)continue;
         const display=displays.find(d=>String(d.id)===String(src.display_id))||
           (displays.length===1?displays[0]:null);
         if(!display)continue;
-        if(!best||h.panelRatio>best.health.panelRatio)best={src,display,health:h};
+        let panel=null;
+        try{panel=locateGtlPanel(src.thumbnail);}catch{}
+        candidates.push({src,display,health:h,panel});
       }
-      if(!best)return fail('VIS-NO-GTL','Monitores captados, pero no se identificó el GTL visible');
+      // An actual GTL panel confirms which display contains the game.
+      const found=candidates.filter(c=>c.panel).sort((a,b)=>
+        (b.health.panelRatio||0)-(a.health.panelRatio||0))[0];
+      if(!found && selected!=='electron-visual' && visualDisplayId===null)
+        return {...fail('VIS-WAIT-GTL','Monitor disponible; esperando identificar el GTL'),waiting:true};
+      const best=found||candidates.find(c=>String(c.display.id)===String(visualDisplayId))||
+        (candidates.length===1?candidates[0]:null);
+      if(!best)return {
+        ...fail('VIS-WAIT-GTL',candidates.length?
+          'Pantallas captadas; esperando ver el GTL en un monitor identificable':
+          'No hay ninguna imagen de monitor válida'),waiting:candidates.length>0
+      };
+      if(found)visualDisplayId=String(best.display.id);
       return {image:best.src.thumbnail,rect:best.display.bounds,via:id,
-        code:'VIS-GTL',detail:'GTL encontrado visualmente en el monitor'};
+        code:found?'VIS-GTL':'VIS-IDLE',
+        visibleGtl:!!found,panel:best.panel||null,
+        detail:found?'GTL localizado visualmente en el monitor':
+          'Monitor captado, GTL no visible; captura en espera'};
     }
     if(id==='win-gdi'||id==='win-print'){
       if(typeof nativeCapture!=='function')
@@ -179,6 +197,9 @@ function createGameCapture({desktopCapturer,screen,locateWindow,inspectThumbnail
       cooldown.set(id,now()+delay);
       if(selected===id)selected=null;
     }
+    if(errors.length===0)return {...fail('CAP-WAIT','Esperando reintento de los motores de captura'),waiting:true};
+    if(errors.includes('VIS-WAIT-GTL')||errors.includes('VIS-IDLE'))
+      return {...fail('CAP-WAIT-GTL','Pantalla disponible; esperando que el GTL sea visible'),waiting:true};
     return fail('CAP-NO-ENGINE','Sin captura válida: '+errors.join(', '));
   }
   return {capture,probeAll,snapshot,preferEngine,debug:()=>lastDebug,getGameRect:()=>lastRect,

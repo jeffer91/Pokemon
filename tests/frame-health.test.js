@@ -47,3 +47,41 @@ test('real-layout GTL table is detected when only five old landmarks match',()=>
   assert.ok(result.panelRatio>.75);
   assert.equal(result.gtl,true);
 });
+
+test('finds the GTL title stripe on a monitor and ignores gameplay without GTL',()=>{
+  const {locateGtlPanel}=require('../src/frame-health');
+  function fake(withGtl){
+    const W=320,H=180,data=Buffer.alloc(W*H*4);
+    for(let y=0;y<H;y++)for(let x=0;x<W;x++){
+      const p=(y*W+x)*4,band=withGtl&&x>=65&&x<257&&y>=25&&y<40;
+      data[p]=band?120:10;data[p+1]=band?99:12;
+      data[p+2]=band?75:9;data[p+3]=255;
+    }
+    const img={isEmpty:()=>false,getSize:()=>({width:W,height:H}),
+      toBitmap:()=>data};
+    img.resize=()=>img;return img;
+  }
+  const panel=locateGtlPanel(fake(true));
+  assert.ok(panel);
+  assert.equal(panel.x,65);
+  assert.equal(panel.width,192);
+  assert.equal(locateGtlPanel(fake(false)),null);
+});
+test('reads gender colors only from the small symbol area',()=>{
+  const {inferGtlSexes}=require('../src/frame-health');
+  const panel={x:200,y:100,width:1000,height:680};
+  const grid={top:.18,step:.042};
+  const image={isEmpty:()=>false,getSize:()=>({width:1600,height:1000}),
+    crop:rect=>{
+      const b=Buffer.alloc(rect.width*rect.height*4);
+      const female=rect.y===Math.round(panel.y+(grid.top+grid.step)*panel.width-panel.width*.024);
+      const male=rect.y===Math.round(panel.y+grid.top*panel.width-panel.width*.024);
+      for(let i=0;i<b.length;i+=4){
+        b[i]=male?200:female?180:65;b[i+1]=male?170:female?90:65;
+        b[i+2]=male?50:female?235:65;b[i+3]=255;
+      }
+      return {toBitmap:()=>b};
+    }};
+  const sex=inferGtlSexes(image,panel,grid);
+  assert.equal(sex[0],'M');assert.equal(sex[1],'F');assert.equal(sex[2],'?');
+});

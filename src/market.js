@@ -5,13 +5,17 @@ const RESERVE_RATIO = 0.30;
 const MAX_SAMPLE_AGE_DAYS = 7;
 const MIN_COMPARABLES = 5;
 const FAST_WINDOW_HOURS = 24;
+const NATURES = new Set(('fuerte hurana audaz firme picara osada docil placida agitada floja miedosa activa seria alegre ingenua modesta afable mansa timida alocada serena amable grosera cauta rara').split(' '));
+function normalizedNature(value){
+  return String(value||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
+}
 
 function validPrice(n) { return Number.isSafeInteger(n) && n > 0 && n <= 2_000_000_000; }
 function validIvs(ivs) { return Array.isArray(ivs) && ivs.length === 6 && ivs.every(n => Number.isInteger(n) && n >= 0 && n <= 31); }
 function validListing(p) {
   return !!p && typeof p.species === 'string' && /^[\p{L}\p{M}.'’\-\s]{2,40}$/u.test(p.species) &&
     Number.isInteger(p.level) && p.level >= 1 && p.level <= 100 &&
-    typeof p.nature === 'string' && p.nature.length > 1 && p.nature.length < 30 &&
+    typeof p.nature === 'string' && NATURES.has(normalizedNature(p.nature)) &&
     validIvs(p.ivs) && validPrice(p.price);
 }
 function signature(p) { return p.ivs.map((n, i) => n === 31 ? i : -1).filter(n => n >= 0).join(','); }
@@ -25,7 +29,7 @@ function percentDiscount(price, baseline) { return baseline ? (baseline - price)
 function comparable(a, b) {
   if (!validListing(a) || !validListing(b) || a.species.toLowerCase() !== b.species.toLowerCase()) return false;
   // Comparable quality: same useful perfect IV positions and same nature.
-  return signature(a) === signature(b) && a.nature.toLowerCase() === b.nature.toLowerCase() &&
+  return signature(a) === signature(b) && normalizedNature(a.nature) === normalizedNature(b.nature) &&
     (a.level === 1) === (b.level === 1) && (a.sex || '?') === (b.sex || '?');
 }
 function saleFee(price, settings = {}) {
@@ -49,6 +53,9 @@ function evaluate(listing, samples = [], { balance = null, listingFee = null, pe
   // The liquidity exclusion needs only a reliable price, not all 6 IVs.
   if (listing.price > spendable) return {decision:'NO_COMPRAR', reason:'RESERVA_30_POR_CIENTO', confidence:1, spendable};
   if (!validListing(listing)) return unknown('LECTURA_INCOMPLETA');
+  // Male/female values materially affect breeding resale prices. Unknown gender
+  // must not be treated as evidence of a profitable purchase.
+  if (!['M','F','N'].includes(listing.sex))return unknown('SEXO_NO_VERIFICADO');
   const cutoff = now - MAX_SAMPLE_AGE_DAYS * 86_400_000;
   const comparableRows = samples.filter(s => validListing(s) && s.lastSeen >= cutoff && s.lastSeen <= now && comparable(listing,s));
   // Deduplicate by ad signature; do not count repeated sightings as independent prices.
@@ -86,4 +93,4 @@ function researchSuggestions(stats = {}) {
   if ((stats.oldSamples || 0) > 30) list.push({key:'refresh',title:'Actualizar búsquedas antiguas',detail:'Obtén referencias recientes para evitar precios desactualizados.'});
   return list.slice(0, 5);
 }
-module.exports = {evaluate, validListing, validPrice, comparable, median, signature, saleFee, availableToSpend, researchSuggestions, RESERVE_RATIO};
+module.exports = {evaluate, validListing, validPrice, comparable, median, signature, saleFee, availableToSpend, researchSuggestions, RESERVE_RATIO, normalizedNature};

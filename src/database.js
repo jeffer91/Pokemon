@@ -14,7 +14,7 @@ function openDatabase(folder) {
   const db = new DatabaseSync(filename);
   db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=3000;');
   const version=db.prepare('PRAGMA user_version').get().user_version;
-  if(version > 2) throw new Error('Esta base requiere una versión más reciente de PokéRadar.');
+  if(version > 3) throw new Error('Esta base requiere una versión más reciente de PokéRadar.');
   if(version < 1) {
     db.exec(`BEGIN IMMEDIATE;
       CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -66,6 +66,16 @@ function openDatabase(folder) {
       db.exec('COMMIT');
     }catch(error){db.exec('ROLLBACK');throw error;}
   }
+  if(version < 3){
+    // Historical rows stay visible, but are NOT price evidence until reconfirmed.
+    db.exec('BEGIN IMMEDIATE');
+    try{
+      db.exec('ALTER TABLE listings ADD COLUMN verified INTEGER NOT NULL DEFAULT 0 CHECK(verified IN (0,1));');
+      db.exec('CREATE INDEX IF NOT EXISTS idx_verified_comparables ON listings(species,verified,last_seen);');
+      db.exec('PRAGMA user_version=3;');
+      db.exec('COMMIT');
+    }catch(error){db.exec('ROLLBACK');throw error;}
+  }
   const check=db.prepare('PRAGMA quick_check').get();
   if(Object.values(check)[0] !== 'ok') throw new Error('La base SQLite no superó la comprobación de integridad.');
   const setStmt=db.prepare('INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value');
@@ -108,6 +118,7 @@ function openDatabase(folder) {
     (seen_at,image_hash,search_context,sort_order,page_number,valid_count,partial_count,ocr_word_count)
     VALUES(?,?,?,?,?,?,?,?)`);
   const addPartial=db.prepare(`INSERT INTO partial_reads(scan_id,rank_number,reason,fields_json) VALUES(?,?,?,?)`);
+  const confirmListing=db.prepare('UPDATE listings SET verified=1 WHERE fingerprint=? AND seen_count>=2');
   let lastBatchHash='',lastBatchAt=0;
   function recordMarketScan({rows=[],partialRows=[],context='general',sort='unknown',page=null,wordCount=0,imageHash=''}={}){
     const now=Date.now(), valid=rows.filter(validListing);
@@ -124,6 +135,8 @@ function openDatabase(folder) {
         addListing.run(fp,row.species,row.level,row.nature,row.sex||null,row.price,JSON.stringify(row.ivs),
           now,now,String(row.age||'').slice(0,50));
         addObservation.run(fp,now,String(context).slice(0,500),Number.isSafeInteger(page)?page:null,row.rank||null);
+        // Two independent, well-formed reads are required before price comparisons.
+        if(row.ocrReliable===true)confirmListing.run(fp);
       }
       for(const item of acceptedPartials){
         const fields={species:item.species||null,level:item.level??null,nature:item.nature||null,
@@ -137,13 +150,22 @@ function openDatabase(folder) {
     }catch(e){db.exec('ROLLBACK');throw e;}
   }
   function candidates(species) {
-    return db.prepare('SELECT * FROM listings WHERE lower(species)=lower(?) AND last_seen >= ? ORDER BY last_seen DESC LIMIT 250')
+    return db.prepare('SELECT * FROM listings WHERE verified=1 AND lower(species)=lower(?) AND last_seen >= ? ORDER BY last_seen DESC LIMIT 250')
       .all(species,Date.now()-7*86_400_000).map(r=>({...r, ivs:JSON.parse(r.ivs_json),lastSeen:r.last_seen}));
   }
+  const recentDecision=db.prepare(`SELECT timestamp FROM recommendations
+    WHERE fingerprint=? AND decision=? AND reason=? ORDER BY id DESC LIMIT 1`);
+  const insertDecision=db.prepare(`INSERT INTO recommendations
+    (fingerprint,timestamp,decision,reason,confidence,estimated_net,baseline,context)
+    VALUES(?,?,?,?,?,?,?,?)`);
   function recordRecommendation(row,evalResult,context) {
-    if(!row||!validListing(row)||evalResult.decision==='SILENCIO')return;
-    db.prepare('INSERT INTO recommendations(fingerprint,timestamp,decision,reason,confidence,estimated_net,baseline,context) VALUES(?,?,?,?,?,?,?,?)')
-      .run(identity(row),Date.now(),evalResult.decision,evalResult.reason,evalResult.confidence,evalResult.netEstimate??null,evalResult.priceReference??null,String(context).slice(0,500));
+    if(!row||!validListing(row)||!evalResult||evalResult.decision==='SILENCIO')return false;
+    const fp=identity(row),now=Date.now();
+    const prior=recentDecision.get(fp,evalResult.decision,evalResult.reason);
+    if(prior && now-prior.timestamp<60*60*1000)return false;
+    insertDecision.run(fp,now,evalResult.decision,evalResult.reason,evalResult.confidence??0,
+      evalResult.netEstimate??null,evalResult.priceReference??null,String(context).slice(0,500));
+    return true;
   }
   function recordBalance(amount,now=Date.now()) {
     if(!Number.isSafeInteger(amount)||amount<0||amount>2_000_000_000) return false;
@@ -153,15 +175,21 @@ function openDatabase(folder) {
     const row=db.prepare('SELECT amount,seen_at FROM balance_observations ORDER BY id DESC LIMIT 1').get();
     return row && Date.now()-row.seen_at<=maxAge?row.amount:null;
   }
-  function recent() {return db.prepare('SELECT species,level,nature,price,ivs_json,last_seen,seen_count FROM listings ORDER BY last_seen DESC LIMIT 30').all()
+  function recent() {return db.prepare('SELECT species,level,nature,price,ivs_json,last_seen,seen_count,verified FROM listings ORDER BY last_seen DESC LIMIT 30').all()
     .map(r=>({...r,ivs:JSON.parse(r.ivs_json)}));}
-  function history(){return db.prepare('SELECT decision,reason,confidence,estimated_net,baseline,timestamp FROM recommendations ORDER BY id DESC LIMIT 50').all();}
+  function history(){return db.prepare(`SELECT r.decision,r.reason,r.confidence,r.estimated_net,
+    r.baseline,r.timestamp,l.species,l.level,l.price,l.verified
+    FROM recommendations r LEFT JOIN listings l ON l.fingerprint=r.fingerprint
+    WHERE r.id IN (SELECT MAX(id) FROM recommendations GROUP BY fingerprint,decision,reason)
+    ORDER BY r.id DESC LIMIT 50`).all();}
   function stats() {
-    const rows=db.prepare('SELECT ivs_json,level,last_seen FROM listings').all();
+    const rows=db.prepare('SELECT ivs_json,level,last_seen FROM listings WHERE verified=1').all();
     let attack31=0,speed31=0,double31=0,level1=0,oldSamples=0;
     for(const r of rows){const a=JSON.parse(r.ivs_json);if(a[1]===31)attack31++;if(a[5]===31)speed31++;
       if(a.filter(x=>x===31).length>=2)double31++;if(r.level===1)level1++;if(Date.now()-r.last_seen>7*86_400_000)oldSamples++;}
-    return {total:rows.length,attack31,speed31,double31,level1,oldSamples};
+    return {total:db.prepare('SELECT count(*) n FROM listings').get().n,trusted:rows.length,
+      unverified:db.prepare('SELECT count(*) n FROM listings WHERE verified=0').get().n,
+      attack31,speed31,double31,level1,oldSamples};
   }
   function addTransaction(item) {
     if(!['BUY','SELL'].includes(item.kind)||typeof item.species!=='string'||!item.species.trim()||!Number.isSafeInteger(item.price)||item.price<=0||!Number.isSafeInteger(item.fee)||item.fee<0) throw Error('Operación no válida');
@@ -170,7 +198,7 @@ function openDatabase(folder) {
   }
   function transactionHistory(){return db.prepare('SELECT * FROM transactions ORDER BY id DESC LIMIT 50').all();}
   function summary(){const s=stats();return {...s,research:researchSuggestions(s),observations:db.prepare('SELECT count(*) n FROM observations').get().n,
-    decisions:db.prepare('SELECT count(*) n FROM recommendations').get().n,
+    decisions:db.prepare('SELECT count(*) n FROM (SELECT 1 FROM recommendations GROUP BY fingerprint,decision,reason)').get().n,
     scans:db.prepare('SELECT count(*) n FROM scan_batches').get().n,
     partials:db.prepare('SELECT count(*) n FROM partial_reads').get().n,
     transactions:db.prepare('SELECT count(*) n FROM transactions').get().n};}

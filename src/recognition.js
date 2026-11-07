@@ -2,6 +2,8 @@
 const path = require('node:path');
 const fs = require('node:fs');
 const {validListing} = require('./market');
+const NATURES=new Set(('fuerte hurana audaz firme picara osada docil placida agitada floja miedosa activa seria alegre ingenua modesta afable mansa timida alocada serena amable grosera cauta rara').split(' '));
+
 
 function normalized(s='') {return String(s).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();}
 function parseMoney(s) {
@@ -71,63 +73,107 @@ function cleanupName(name){
 function parseScreen(data,width,height,options={}) {
   let words=cleanWords(data,width,height);
   const rect=options.crop;
-  if(rect){
-    // Keep all OCR positions in normalized ORIGINAL game-client coordinates.
+  const panel=options.panel;
+  const isPanel=panel && Number.isFinite(panel.width) && panel.width>200 && rect;
+  if(isPanel){
+    // Convert OCR positions to panel-local units. Y uses PANEL WIDTH so the
+    // row step scales consistently regardless of screen aspect ratio.
+    words=words.map(w=>({
+      ...w,x:(rect.x+w.x*width-panel.x)/panel.width,
+      y:(rect.y+w.y*height-panel.y)/panel.width
+    })).filter(w=>w.x>=0&&w.x<=1.02&&w.y>=.08&&w.y<=.68);
+  }else if(rect){
     words=words.map(w=>({...w,x:(rect.x+w.x*width)/rect.fullWidth,
       y:(rect.y+w.y*height)/rect.fullHeight}));
   }
   const all=normalized(join(words));
-  const buyButtons=words.filter(w=>normalized(w.text)==='comprar' && w.x>.68 && w.x<.84 && w.y>.28 && w.y<.80).length;
+  const buyButtons=words.filter(w=>normalized(w.text)==='comprar' &&
+    (isPanel?w.x>.85&&w.x<1.01&&w.y>.13&&w.y<.65:
+      w.x>.68&&w.x<.84&&w.y>.28&&w.y<.80)).length;
   const gtl=options.gtlConfirmed===true || (isGtlHeader(all) &&
     (all.includes('anuncios')||all.includes('comprar')||all.includes('precio'))) || buyButtons>=3;
-  const advanced=gtl && (all.includes('precio minimo')||all.includes('iv ataque min')||all.includes('coincidencias de iv'));
-  const context=normalized(join(fieldWords(words,.20,.80,.19,.25))).slice(0,180)||'general';
+  const advanced=gtl && (all.includes('precio minimo')||all.includes('iv ataque min')||
+    all.includes('coincidencias de iv')||all.includes('iv ps max'));
+  const context=isPanel?'gtl-panel':
+    normalized(join(fieldWords(words,.20,.80,.19,.25))).slice(0,180)||'general';
   const isOld=all.includes('mas viejo'),isNew=all.includes('mas nuevo');
-  const balanceArea=join(fieldWords(words,0,.13,.05,.13));
+  const balanceArea=isPanel?'':join(fieldWords(words,0,.13,.05,.13));
   const balanceMatch=balanceArea.match(/\$\s*([\d.,]+)/);
   const balance=balanceMatch?parseMoney(balanceMatch[1]):null;
   const base={gtl,advanced,context,sort:isOld?'oldest':isNew?'newest':'unknown',
     balance,page:null,wordCount:words.length};
-  if(!gtl||advanced)return {...base,rows:[],partialRows:[],layout:overlayLayout(words)};
+  if(!gtl||advanced)return {...base,rows:[],partialRows:[],layout:null};
   const rows=[],partialRows=[];
-  const grid=rowGrid(words);
-  // The top row is about 0.326 of the game CLIENT area, not the whole screenshot.
+  const cfg=isPanel?{
+    name:[.078,.292],nature:[.292,.356],price:[.557,.675],
+    sex:[.012,.078],age:[.675,.765],
+    ivStart:.355,ivStep:.0335,ivWidth:.0335
+  }:{
+    name:[.257,.365],nature:[.365,.410],price:[.528,.596],
+    sex:[.209,.256],age:[.596,.668],
+    ivStart:.410,ivStep:.0203,ivWidth:.0203
+  };
+  const grid=isPanel?panelRowGrid(words):rowGrid(words);
   for(let i=0;i<10;i++){
     const y=grid.top+i*grid.step;
-    const row=fieldWords(words,.20,.80,y-.019,y+.019);
+    const row=fieldWords(words,isPanel?0:.20,isPanel?1.02:.80,
+      y-(isPanel?.016:.019),y+(isPanel?.016:.019));
     if(row.length<3)continue;
-    const nameWords=fieldWords(row,.257,.365,0,1);
+    const nameWords=fieldWords(row,...cfg.name,0,1);
     const rawName=join(nameWords);
     const match=rawName.match(/^(?:Nv[.,:]?\s*)?(\d{1,3})\s*(\p{L}[\p{L}\p{M}.'’\-\s]*)/iu);
     const level=match?Number(match[1]):null;
     const species=match?cleanupName(match[2].replace(/[^\p{L}\p{M}.'’\-\s]/gu,'')):null;
-    const natureWords=fieldWords(row,.365,.410,0,1);
+    const natureWords=fieldWords(row,...cfg.nature,0,1);
     const nature=normalized(join(natureWords)).replace(/[^\p{L}\s]/gu,'').trim();
-    const priceWords=fieldWords(row,.528,.596,0,1);
-    const price=parseMoney(join(priceWords));
-    const priceReliable=priceWords.length>0 && priceWords.every(w=>w.conf>=70);
+    const priceWords=fieldWords(row,...cfg.price,0,1);
+    const rawPrice=join(priceWords);
+    const price=parseMoney(rawPrice);
+    const priceReliable=!!price&&priceWords.length>0&&priceWords.every(w=>w.conf>=70);
     const ivs=[];
     for(let j=0;j<6;j++){
-      const x=.410+j*.0203;
-      const col=fieldWords(row,x,x+.0203,0,1);
+      const x=cfg.ivStart+j*cfg.ivStep;
+      const col=fieldWords(row,x,x+cfg.ivWidth,0,1);
       const str=join(col).replace(/[^\d]/g,'');
-      const v=/^\d{1,2}$/.test(str)&&col.every(w=>w.conf>=65)?Number(str):null;
-      ivs.push(v);
+      const v=/^\d{1,2}$/.test(str)&&col.length>0&&col.every(w=>w.conf>=65)?Number(str):null;
+      ivs.push(v!==null&&v<=31?v:null);
     }
-    const genderRaw=join(fieldWords(row,.209,.256,0,1));
+    const genderRaw=join(fieldWords(row,...cfg.sex,0,1));
     const sex=/♀/.test(genderRaw)?'F':/♂/.test(genderRaw)?'M':'?';
-    const age=join(fieldWords(row,.596,.668,0,1));
+    const age=join(fieldWords(row,...cfg.age,0,1));
     const entry={species,level,nature,sex,price,ivs,age,rank:i+1};
-    // Do not contaminate prices with low-confidence OCR readings.
-    const nameReliable=nameWords.some(w=>w.conf>=70 && /\p{L}{3,}/u.test(w.text));
-    const natureReliable=natureWords.length>0 && natureWords.every(w=>w.conf>=65);
-    if(validListing(entry)&&priceReliable&&nameReliable&&natureReliable)rows.push(entry);
+    const nameReliable=nameWords.some(w=>w.conf>=70&&/\p{L}{3,}/u.test(w.text));
+    const natureReliable=natureWords.length>0&&natureWords.every(w=>w.conf>=65)&&NATURES.has(nature);
+    const accepted=validListing(entry)&&priceReliable&&nameReliable&&natureReliable;
+    if(accepted)rows.push({...entry,ocrReliable:true});
     else if(species||price||ivs.some(v=>v!==null))
-      partialRows.push({rank:i+1,species,level,nature,sex,price,ivs,priceReliable,
-        missing:!species?'ESPECIE':!Number.isInteger(level)?'NIVEL':!nature?'NATURALEZA':!price?'PRECIO':'IV_INCOMPLETOS'});
+      partialRows.push({...entry,priceReliable,
+        missing:!species||!nameReliable?'ESPECIE':!Number.isInteger(level)?'NIVEL':
+          !natureReliable?'NATURALEZA':!priceReliable?'PRECIO_NO_FIABLE':'IV_INCOMPLETOS'});
   }
-  return {...base,rows,partialRows,grid,layout:overlayLayout(words)};
+  const layout=isPanel?{
+    kind:'panel',panel,frameWidth:rect.fullWidth,frameHeight:rect.fullHeight,
+    firstRowUnits:grid.top,stepUnits:grid.step,rightUnits:1.015
+  }:overlayLayout(words);
+  return {...base,rows,partialRows,grid,layout};
 }
+function panelRowGrid(words) {
+  const buys=words.filter(w=>normalized(w.text)==='comprar'&&w.x>.85&&w.x<1.01&&w.y>.13&&w.y<.65)
+    .map(w=>w.y).sort((a,b)=>a-b);
+  const levels=words.filter(w=>/^nv[.,:]?$/i.test(w.text)&&w.x>.08&&w.x<.20&&w.y>.13&&w.y<.65)
+    .map(w=>w.y).sort((a,b)=>a-b);
+  const markers=buys.length>=3?buys:levels;
+  const gaps=[];
+  for(let i=1;i<markers.length;i++){
+    const gap=markers[i]-markers[i-1];
+    if(gap>=.035&&gap<=.052)gaps.push(gap);
+  }
+  gaps.sort((a,b)=>a-b);
+  const step=gaps.length>=2?gaps[Math.floor(gaps.length/2)]:.042;
+  const first=markers.find(v=>v>=.155&&v<=.205);
+  return {top:first??.18,step};
+}
+
 async function createRecognizer(){
   const {createWorker, PSM}=require('tesseract.js');
   const languageFolder=path.dirname(require.resolve('@tesseract.js-data/spa/4.0.0_best_int/spa.traineddata.gz'));
