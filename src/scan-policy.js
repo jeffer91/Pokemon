@@ -11,4 +11,7 @@ function region(width,height,part){
   return {x,y,width:Math.min(width-x,Math.ceil(width*box[2])),
     height:Math.min(height-y,Math.ceil(height*box[3]))};
 }
-module.exports={nextDelay,region,DELAYS};
+function shouldCheckHeader(fingerprint,previousFingerprint,lastCheckedAt,now=Date.now(),retryMs=6000){
+  return fingerprint!==previousFingerprint || !lastCheckedAt || now-lastCheckedAt>=retryMs;
+}
+module.exports={nextDelay,region,shouldCheckHeader,DELAYS};

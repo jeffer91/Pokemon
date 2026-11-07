@@ -6,12 +6,12 @@ const {openDatabase,identity}=require('./database');
 const {evaluate}=require('./market');
 const {createRecognizer}=require('./recognition');
 const {locateWindow}=require('./window-locator');
-const {nextDelay,region}=require('./scan-policy');
+const {nextDelay,region,shouldCheckHeader}=require('./scan-policy');
 
 if(!app.requestSingleInstanceLock())app.quit();
 let dashboard,overlay,storage,recognizer,scanTimer,backupTimer;
 let sessionActive=false,sessionVersion=0,working=false,mode='idle';
-let headerHash='',tableHash='',lastPublished=0,lastOverlayBounds='';
+let headerHash='',tableHash='',lastHeaderCheckedAt=0,lastPublished=0,lastOverlayBounds='';
 let status={state:'inactivo',message:'Pulsa Play para iniciar.',running:false,recognized:0,latency:null};
 function broadcast(channel,payload){
   for(const w of [dashboard,overlay])if(w&&!w.isDestroyed())w.webContents.send(channel,payload);
@@ -49,25 +49,24 @@ function place(rect){
 }
 function compactFallback(){
   const work=screen.getPrimaryDisplay().workArea;
-  return {x:work.x+work.width-122,y:work.y+12,width:110,height:32};
+  return {x:work.x+work.width-122,y:work.y+140,width:110,height:32};
 }
-async function showCompact(){
+async function showCompact(label='Radar'){
   if(!sessionActive||!overlay||overlay.isDestroyed())return;
   const version=sessionVersion;
-  broadcast('radar:overlay',{mode:'compact'});
+  broadcast('radar:overlay',{mode:'compact',label});
   place(compactFallback());
   const game=await locateWindow();
   if(!sessionActive||version!==sessionVersion||!game)return;
   const work=screen.getDisplayMatching(game).workArea;
   const width=110,height=32;
-  const outside=game.x+game.width+8+width<=work.x+work.width;
-  const x=outside?game.x+game.width+8:Math.min(work.x+work.width-width,game.x+game.width-width-10);
-  const y=Math.max(work.y,Math.min(work.y+work.height-height,game.y+10));
+  const x=Math.max(work.x,Math.min(work.x+work.width-width,Math.round(game.x+game.width*.82)));
+  const y=Math.max(work.y,Math.min(work.y+work.height-height,Math.round(game.y+game.height*.155)));
   place({x,y,width,height});
 }
 async function showResults(rows,version,layout=null){
   if(!sessionActive||sessionVersion!==version||!overlay||overlay.isDestroyed())return;
-  if(!rows.some(r=>r.decision!=='SILENCIO'))return showCompact();
+  if(!rows.some(r=>r.decision!=='SILENCIO'))return showCompact('GTL '+rows.length+'/10');
   const game=await locateWindow();
   if(!sessionActive||sessionVersion!==version)return;
   if(!game)return showCompact();
@@ -134,8 +133,9 @@ async function tick(){
       // Only OCR a small GTL header when outside the market.
       const header=cropped(source.thumbnail,size.width,size.height,'header');
       const fp=imageHash(header);
-      if(fp===headerHash)return;
-      headerHash=fp;
+      const now=Date.now();
+      if(!shouldCheckHeader(fp,headerHash,lastHeaderCheckedAt,now))return;
+      headerHash=fp;lastHeaderCheckedAt=now;
       const found=await recognizer.detectGtl(header);
       if(!sessionActive||version!==sessionVersion)return;
       if(found){
@@ -157,6 +157,7 @@ async function tick(){
       // Remember this non-list screen so an open filter panel does not trigger
       // repeated full OCR passes while it remains unchanged.
       headerHash=imageHash(cropped(source.thumbnail,size.width,size.height,'header'));
+      lastHeaderCheckedAt=Date.now();
       setStatus({state:res.advanced?'investigando':'esperando',
         message:res.advanced?'Búsqueda avanzada.':'Radar listo. Entra al GTL.',recognized:0,
         latency:Math.round(performance.now()-start)});
@@ -174,12 +175,12 @@ async function tick(){
     });
     if(!sessionActive||version!==sessionVersion)return;
     await showResults(decisions,version,res.layout);
-    setStatus({state:'activo',message:res.rows.length+' anuncios leídos.',
+    setStatus({state:'activo',message:res.rows.length+' de 10 anuncios leídos. '+(decisions.some(d=>d.decision==='COMPRAR')?'Oportunidades detectadas.':'Recopilando referencias.'),
       recognized:res.rows.length,latency:Math.round(performance.now()-start)});
     if(saved)publishData();
   }catch(error){
     if(!sessionActive||version!==sessionVersion)return;
-    mode='idle';headerHash='';tableHash='';
+    mode='idle';headerHash='';tableHash='';lastHeaderCheckedAt=0;
     setStatus({state:'error',message:'Lectura pendiente de calibración: '+error.message,recognized:0,
       latency:Math.round(performance.now()-start)});
     await showCompact();
@@ -190,13 +191,13 @@ async function tick(){
 }
 function stopSession(){
   sessionActive=false;sessionVersion++;clearTimeout(scanTimer);
-  mode='idle';headerHash='';tableHash='';lastOverlayBounds='';
+  mode='idle';headerHash='';tableHash='';lastHeaderCheckedAt=0;lastOverlayBounds='';
   overlay?.hide();
   setStatus({state:'inactivo',message:'Radar detenido.',recognized:0,latency:null});
 }
 async function startSession(){
   if(sessionActive)return {ok:true,running:true};
-  sessionActive=true;sessionVersion++;mode='idle';headerHash='';tableHash='';
+  sessionActive=true;sessionVersion++;mode='idle';headerHash='';tableHash='';lastHeaderCheckedAt=0;
   setStatus({state:'esperando',message:'Preparando radar.',recognized:0,latency:null});
   // Passive overlay: never intercepts game clicks or keyboard focus.
   void showCompact();

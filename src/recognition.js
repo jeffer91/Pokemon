@@ -44,10 +44,17 @@ function overlayLayout(words) {
   return {firstRowTopNorm:Math.max(.27,first.y-step/2),
     stepNorm:step,overlayXNorm:Math.max(.795,Math.min(.88,right))};
 }
-function parseScreen(data,width,height) {
+function isGtlHeader(text) {
+  const s=normalized(text);
+  return s.includes('comercio') || s.includes('anuncios de pokemon') ||
+    s.includes('mercado de objetos') || s.includes('busqueda avanzada');
+}
+function parseScreen(data,width,height,options={}) {
   const words=cleanWords(data,width,height);
   const all=normalized(join(words));
-  const gtl=all.includes('comercio')&&(all.includes('anuncios')||all.includes('comprar')||all.includes('busqueda'));
+  const buyButtons=words.filter(w=>normalized(w.text)==='comprar' && w.x>.68 && w.x<.84 && w.y>.28 && w.y<.80).length;
+  const gtl=(isGtlHeader(all) && (all.includes('anuncios')||all.includes('comprar')||all.includes('precio'))) ||
+    (options.gtlConfirmed===true && buyButtons>=2);
   const advanced=gtl && (all.includes('precio minimo')||all.includes('iv ataque min')||all.includes('coincidencias de iv'));
   const search=join(fieldWords(words,.20,.80,.19,.25));
   const context=normalized(search).slice(0,180)||'general';
@@ -97,12 +104,10 @@ async function createRecognizer(){
   await worker.setParameters({tessedit_pageseg_mode:PSM.SPARSE_TEXT,preserve_interword_spaces:'1'});
   return {async detectGtl(image) {
     const result=await worker.recognize(image);
-    const text=normalized(result.data.text||'');
-    return (text.includes('comercio')||text.includes('gtl')) &&
-      (text.includes('anuncios')||text.includes('pokemon')||text.includes('comprar')||text.includes('busqueda'));
+    return isGtlHeader(result.data.text||'');
   },async analyze(image,width,height) {
     const result=await worker.recognize(image,{}, {blocks:true,text:true});
-    return parseScreen(result.data,width,height);
+    return parseScreen(result.data,width,height,{gtlConfirmed:true});
   },close:()=>worker.terminate()};
 }
-module.exports={parseScreen,parseMoney,flattenWords,cleanWords,createRecognizer,normalized,overlayLayout};
+module.exports={parseScreen,parseMoney,flattenWords,cleanWords,createRecognizer,normalized,overlayLayout,isGtlHeader};

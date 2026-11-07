@@ -3,7 +3,7 @@
 #rows.compact{display:flex;align-items:center;justify-content:center;width:100%;height:100%}
 .mini{display:flex;align-items:center;justify-content:center;gap:6px;width:106px;height:29px;
   border-radius:10px;background:#f8fff9ee;border:1px solid #b6ddc5;color:#176b45;
-  font-weight:800;font-size:12px;box-shadow:0 1px 6px #162b3820}
+  font-weight:800;font-size:12px;white-space:nowrap;box-shadow:0 1px 6px #162b3820}
 .dot{width:7px;height:7px;border-radius:50%;background:#25a66a}
 .slot{display:flex;align-items:center;justify-content:center;width:100%;padding:2px}
 .decision{width:100%;min-height:28px;border-radius:7px;display:flex;align-items:center;justify-content:center;

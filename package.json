@@ -1,6 +1,6 @@
 {
   "name": "pokeradar-gtl",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Radar local de oportunidades del GTL de PokeMMO (fase 1)",
   "private": true,
   "main": "src/main.js",

@@ -52,3 +52,11 @@ La ventana flotante no recibe clics. La app no hace clic, no automatiza compras,
 - `src/database.js`: SQLite y respaldos.
 - `src/ui/`: interfaz clara, mínima y sin configuraciones manuales.
 - `tests/`: pruebas automatizadas.
+
+## Radar compacto — diagnóstico de lectura
+
+- **Radar**: esperando detectar el GTL. Se reintenta el reconocimiento del título cada 6 segundos, aunque la imagen no cambie.
+- **GTL 0/10**: se detectó el mercado, pero no hay filas completamente reconocidas; se requiere calibración del OCR.
+- **GTL N/10**: se reconocieron N filas; si no aparecen decisiones todavía, faltan datos comparables o saldo confiable. No se inventan recomendaciones.
+
+La pestaña pequeña se sitúa en el espacio libre dentro de la ventana del juego, evitando los controles de Windows.

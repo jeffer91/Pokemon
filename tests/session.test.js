@@ -17,3 +17,10 @@ test('regions are inside bounds and header is smaller than the table',()=>{
   assert.throws(()=>region(1,1,'header'));
   assert.throws(()=>region(1680,900,'unknown'));
 });
+
+test('retry a header OCR miss even when the screen remains unchanged',()=>{
+  const {shouldCheckHeader}=require('../src/scan-policy');
+  assert.equal(shouldCheckHeader('abc','abc',1000,2000),false);
+  assert.equal(shouldCheckHeader('abc','abc',1000,7001),true);
+  assert.equal(shouldCheckHeader('new','abc',7000,7100),true);
+});

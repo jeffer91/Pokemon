@@ -31,3 +31,10 @@ test('posiciona el radar con filas de Comprar reconocidas',()=>{
   assert.ok(Math.abs(layout.stepNorm-.0455)<.001);
   assert.equal(overlayLayout(words.slice(0,2)),null);
 });
+
+test('recognizes distinctive market headers despite incomplete OCR',()=>{
+  const {isGtlHeader}=require('../src/recognition');
+  assert.equal(isGtlHeader('Servidor de Comercio'),true);
+  assert.equal(isGtlHeader('Anuncios de Pokémon'),true);
+  assert.equal(isGtlHeader('Ciudad Iris'),false);
+});

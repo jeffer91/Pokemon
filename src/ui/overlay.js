@@ -6,7 +6,7 @@ window.radar.on('radar:overlay',payload=>{
     root.className='compact';
     const box=document.createElement('div');box.className='mini';
     const dot=document.createElement('span');dot.className='dot';
-    const text=document.createElement('span');text.textContent='Radar';
+    const text=document.createElement('span');text.textContent=(payload.label||'Radar').slice(0,14);
     box.append(dot,text);root.append(box);return;
   }
   root.className='';
