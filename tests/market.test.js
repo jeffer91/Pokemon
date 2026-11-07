@@ -1,0 +1,51 @@
+'use strict';
+const {test}=require('node:test');
+const assert=require('node:assert/strict');
+const {evaluate,median,validListing,comparable,availableToSpend,researchSuggestions}=require('../src/market');
+function pokemon(price=20000,extra={}){return {species:'Gible',nature:'alegre',level:1,sex:'M',ivs:[30,31,22,10,11,31],price,...extra};}
+const now=Date.now();
+function samples(prices){return prices.map((p,i)=>({...pokemon(p),fingerprint:'item'+i,lastSeen:now-3600000}));}
+test('valida filas completas y no inventa IVs',()=>{
+  assert.equal(validListing(pokemon()),true);
+  assert.equal(validListing(pokemon(100,{ivs:[31,null,3,5,4,2]})),false);
+  assert.equal(validListing(pokemon(-3)),false);
+});
+test('requiere comisión conocida y saldo confirmado',()=>{
+  assert.equal(evaluate(pokemon(),[],{balance:100000}).reason,'COMISION_SIN_CONFIGURAR');
+  assert.equal(evaluate(pokemon(),[],{listingFee:1000}).reason,'SALDO_NO_CONFIRMADO');
+});
+test('respeta la reserva del treinta por ciento',()=>{
+  assert.equal(availableToSpend(100000),70000);
+  assert.equal(availableToSpend(100000,10000),60000);
+  assert.equal(evaluate(pokemon(75000),samples([90000,100000]),{balance:100000,listingFee:1000}).reason,'RESERVA_30_POR_CIENTO');
+});
+test('no recomienda sin suficientes anuncios independientes',()=>{
+  const p=pokemon(15000,{fingerprint:'target'});
+  assert.equal(evaluate(p,samples([25000,24000,26000]),{balance:100000,listingFee:1000,now}).decision,'SILENCIO');
+  const repeated=Array(20).fill(samples([25000])[0]);
+  assert.equal(evaluate(p,repeated,{balance:100000,listingFee:1000,now}).decision,'SILENCIO');
+});
+test('una ganga con referencias recientes y margen puede ser recomendable',()=>{
+  const values=[28000,29000,30000,29000,31000,30000,28000,30000,32000,29000,28000,30000,30000,31000,29000];
+  const result=evaluate(pokemon(21000,{fingerprint:'target'}),samples(values),{balance:100000,listingFee:1000,now});
+  assert.equal(result.decision,'COMPRAR');assert.equal(result.netEstimate,8000);
+});
+test('precios sin suficiente margen no pasan',()=>{
+  const result=evaluate(pokemon(29000,{fingerprint:'target'}),samples(Array(15).fill(30000)),{balance:100000,listingFee:1200,now});
+  assert.equal(result.decision,'NO_COMPRAR');
+});
+test('precios recientes prevalecen sobre referencias caducadas',()=>{
+  const old=samples(Array(10).fill(30000)).map(p=>({...p,lastSeen:now-10*86400000}));
+  const result=evaluate(pokemon(10000,{fingerprint:'target'}),old,{balance:100000,listingFee:1000,now});
+  assert.equal(result.decision,'SILENCIO');
+});
+test('solo compara naturaleza, sexo, nivel 1 e IVs relevantes equivalentes',()=>{
+  assert.equal(comparable(pokemon(20000),pokemon(23000)),true);
+  assert.equal(comparable(pokemon(20000),pokemon(23000,{nature:'firme'})),false);
+  assert.equal(comparable(pokemon(20000),pokemon(23000,{ivs:[30,30,22,10,11,31]})),false);
+  assert.equal(comparable(pokemon(20000),pokemon(23000,{sex:'F'})),false);
+});
+test('mediana robusta y búsquedas guiadas',()=>{
+  assert.equal(median([10,1000000,12,11,9]),11);
+  assert.ok(researchSuggestions({total:0}).length>2);
+});
