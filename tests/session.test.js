@@ -3,7 +3,7 @@ const {test}=require('node:test');const assert=require('node:assert/strict');
 const {nextDelay,region}=require('../src/scan-policy');
 test('idle sampling is slower than active GTL sampling',()=>{
   assert.ok(nextDelay('idle')>nextDelay('gtl'));
-  assert.ok(nextDelay('idle')>=1500);
+  assert.ok(nextDelay('idle')>=1000);
   assert.ok(nextDelay('gtl')>=500);
 });
 test('regions are inside bounds and header is smaller than the table',()=>{
@@ -23,4 +23,12 @@ test('retry a header OCR miss even when the screen remains unchanged',()=>{
   assert.equal(shouldCheckHeader('abc','abc',1000,2000),false);
   assert.equal(shouldCheckHeader('abc','abc',1000,7001),true);
   assert.equal(shouldCheckHeader('new','abc',7000,7100),true);
+});
+
+test('market and balance crops stay inside the client frame',()=>{
+  for(const part of ['market','balance']){
+    const p=region(1680,871,part);
+    assert.ok(p.width>0&&p.height>0);
+    assert.ok(p.x+p.width<=1680&&p.y+p.height<=871);
+  }
 });

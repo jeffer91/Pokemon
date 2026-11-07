@@ -63,3 +63,8 @@ test('carga automática permite evaluar sin pedir cuota',()=>{
   assert.equal(result.netEstimate,6500);
   assert.equal(result.feeModel,'conservative-estimate');
 });
+
+test('budget exclusion can reject a partially read listing safely',()=>{
+  assert.equal(evaluate({price:75000,ivs:[null]},[],{balance:100000}).reason,'RESERVA_30_POR_CIENTO');
+  assert.equal(evaluate({price:12000,ivs:[null]},[],{balance:100000}).decision,'SILENCIO');
+});

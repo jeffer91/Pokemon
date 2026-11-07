@@ -38,3 +38,36 @@ test('recognizes distinctive market headers despite incomplete OCR',()=>{
   assert.equal(isGtlHeader('Anuncios de Pokémon'),true);
   assert.equal(isGtlHeader('Ciudad Iris'),false);
 });
+
+test('reads ten GTL rows with coordinates sampled from the real game layout',()=>{
+  const fixtures=[
+    ['Ditto',52,'osada',[4,14,4,25,23,17],12000],
+    ['Raticate',68,'alocada',[31,29,7,21,5,31],45000],
+    ['Excadrill',100,'firme',[31,31,31,11,31,31],749999],
+    ['Drapion',49,'seria',[21,21,12,9,2,31],2000],
+    ['Magikarp',7,'huraña',[10,15,28,9,26,31],4400],
+    ['Scraggy',16,'dócil',[30,30,10,4,31,7],2000],
+    ['Scolipede',80,'huraña',[31,4,16,31,31,19],50000],
+    ['Altaria',71,'huraña',[27,26,13,6,31,31],32000],
+    ['Tropius',100,'dócil',[0,16,15,1,5,29],100000],
+    ['Excadrill',100,'firme',[31,31,31,11,31,31],749999]
+  ];
+  function actualWord(t,x,y){
+    return {text:String(t),confidence:95,bbox:{x0:x*1680-6,x1:x*1680+6,y0:y*871-5,y1:y*871+5}};
+  }
+  const words=[];
+  fixtures.forEach(([species,level,nature,ivs,price],i)=>{
+    const y=.326+i*.047;
+    if(i===0)words.push(actualWord('Nv.52Ditto',.298,y));
+    else words.push(actualWord('Nv,',.268,y),actualWord(level,.283,y),actualWord(species,.314,y));
+    words.push(actualWord(nature,.382,y));
+    ivs.forEach((iv,j)=>words.push(actualWord(iv,.420+j*.0205,y)));
+    words.push(actualWord('$'+price.toLocaleString('de-DE'),.557,y),actualWord('Comprar',.760,y));
+  });
+  const actual=parseScreen({words},1680,871,{gtlConfirmed:true});
+  assert.equal(actual.rows.length,10);
+  assert.equal(actual.partialRows.length,0);
+  assert.equal(actual.rows[0].species,'Ditto');
+  assert.equal(actual.rows[2].price,749999);
+  assert.equal(actual.rows[9].rank,10);
+});

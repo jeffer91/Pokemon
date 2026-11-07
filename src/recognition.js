@@ -24,6 +24,22 @@ function cleanWords(data,width,height){
 }
 function fieldWords(words,xMin,xMax,yMin,yMax) {return words.filter(w=>w.x>=xMin&&w.x<xMax&&w.y>=yMin&&w.y<yMax).sort((a,b)=>a.x-b.x);}
 function join(words){return words.map(w=>w.text).join(' ').trim();}
+function rowGrid(words){
+  const buy=words.filter(w=>normalized(w.text)==='comprar' && w.x>.71&&w.x<.81&&w.y>.30&&w.y<.82)
+    .map(w=>w.y).sort((a,b)=>a-b);
+  const levels=words.filter(w=>/^nv[.,:]?$/i.test(w.text)&&w.x>.25&&w.x<.34&&w.y>.30&&w.y<.82)
+    .map(w=>w.y).sort((a,b)=>a-b);
+  const markers=buy.length>=3?buy:levels;
+  const gaps=[];
+  for(let i=1;i<markers.length;i++){
+    const diff=markers[i]-markers[i-1];
+    if(diff>.038&&diff<.06)gaps.push(diff);
+  }
+  gaps.sort((a,b)=>a-b);
+  const step=gaps.length>=2?gaps[Math.floor(gaps.length/2)]:.0465;
+  const first=markers.find(y=>y>=.306&&y<=.349);
+  return {top:first??.326,step};
+}
 function overlayLayout(words) {
   // Anchor to OCR-observed BUY buttons when enough rows are visible. This keeps
   // the labels aligned when the GTL UI is scaled or repositioned.
@@ -49,37 +65,45 @@ function isGtlHeader(text) {
   return s.includes('comercio') || s.includes('anuncios de pokemon') ||
     s.includes('mercado de objetos') || s.includes('busqueda avanzada');
 }
+function cleanupName(name){
+  return String(name||'').replace(/\s+/g,' ').trim();
+}
 function parseScreen(data,width,height,options={}) {
-  const words=cleanWords(data,width,height);
+  let words=cleanWords(data,width,height);
+  const rect=options.crop;
+  if(rect){
+    // Keep all OCR positions in normalized ORIGINAL game-client coordinates.
+    words=words.map(w=>({...w,x:(rect.x+w.x*width)/rect.fullWidth,
+      y:(rect.y+w.y*height)/rect.fullHeight}));
+  }
   const all=normalized(join(words));
   const buyButtons=words.filter(w=>normalized(w.text)==='comprar' && w.x>.68 && w.x<.84 && w.y>.28 && w.y<.80).length;
-  const gtl=(isGtlHeader(all) && (all.includes('anuncios')||all.includes('comprar')||all.includes('precio'))) ||
-    (options.gtlConfirmed===true && buyButtons>=2);
+  const gtl=options.gtlConfirmed===true || (isGtlHeader(all) &&
+    (all.includes('anuncios')||all.includes('comprar')||all.includes('precio'))) || buyButtons>=3;
   const advanced=gtl && (all.includes('precio minimo')||all.includes('iv ataque min')||all.includes('coincidencias de iv'));
-  const search=join(fieldWords(words,.20,.80,.19,.25));
-  const context=normalized(search).slice(0,180)||'general';
-  const ageWords = fieldWords(words,.59,.69,.28,.8);
-  const isOld=all.includes('mas viejo');
-  const isNew=all.includes('mas nuevo');
+  const context=normalized(join(fieldWords(words,.20,.80,.19,.25))).slice(0,180)||'general';
+  const isOld=all.includes('mas viejo'),isNew=all.includes('mas nuevo');
   const balanceArea=join(fieldWords(words,0,.13,.05,.13));
   const balanceMatch=balanceArea.match(/\$\s*([\d.,]+)/);
   const balance=balanceMatch?parseMoney(balanceMatch[1]):null;
-  if(!gtl||advanced)return {gtl,advanced,rows:[],context,sort:isOld?'oldest':isNew?'newest':'unknown',balance};
-  const rows=[];
-  // Normalized grid based on the reference screenshots (1680x900, 10 rows).
-  // Deliberately reject ambiguous OCR instead of guessing any IV or price.
-  const top=.316,step=.0455;
+  const base={gtl,advanced,context,sort:isOld?'oldest':isNew?'newest':'unknown',
+    balance,page:null,wordCount:words.length};
+  if(!gtl||advanced)return {...base,rows:[],partialRows:[],layout:overlayLayout(words)};
+  const rows=[],partialRows=[];
+  const grid=rowGrid(words);
+  // The top row is about 0.326 of the game CLIENT area, not the whole screenshot.
   for(let i=0;i<10;i++){
-    const y=top+i*step;
-    const row=fieldWords(words,.20,.80,y-.015,y+.017);
-    if(!row.length)continue;
+    const y=grid.top+i*grid.step;
+    const row=fieldWords(words,.20,.80,y-.019,y+.019);
+    if(row.length<3)continue;
     const rawName=join(fieldWords(row,.257,.365,0,1));
-    const match=rawName.match(/(?:Nv\.?\s*)?(\d{1,3})\s+(.+)/i);
-    if(!match)continue;
-    const level=Number(match[1]);
-    const species=match[2].replace(/[^\p{L}\p{M}.'’\-\s]/gu,'').replace(/\s+/g,' ').trim();
+    const match=rawName.match(/^(?:Nv[.,:]?\s*)?(\d{1,3})\s*(\p{L}[\p{L}\p{M}.'’\-\s]*)/iu);
+    const level=match?Number(match[1]):null;
+    const species=match?cleanupName(match[2].replace(/[^\p{L}\p{M}.'’\-\s]/gu,'')):null;
     const nature=normalized(join(fieldWords(row,.365,.410,0,1))).replace(/[^\p{L}\s]/gu,'').trim();
-    const price=parseMoney(join(fieldWords(row,.528,.596,0,1)));
+    const priceWords=fieldWords(row,.528,.596,0,1);
+    const price=parseMoney(join(priceWords));
+    const priceReliable=priceWords.length>0 && priceWords.every(w=>w.conf>=70);
     const ivs=[];
     for(let j=0;j<6;j++){
       const x=.410+j*.0203;
@@ -93,8 +117,11 @@ function parseScreen(data,width,height,options={}) {
     const age=join(fieldWords(row,.596,.668,0,1));
     const entry={species,level,nature,sex,price,ivs,age,rank:i+1};
     if(validListing(entry))rows.push(entry);
+    else if(species||price||ivs.some(v=>v!==null))
+      partialRows.push({rank:i+1,species,level,nature,sex,price,ivs,priceReliable,
+        missing:!species?'ESPECIE':!Number.isInteger(level)?'NIVEL':!nature?'NATURALEZA':!price?'PRECIO':'IV_INCOMPLETOS'});
   }
-  return {gtl,advanced,rows,layout:overlayLayout(words),context,sort:isOld?'oldest':isNew?'newest':'unknown',balance};
+  return {...base,rows,partialRows,grid,layout:overlayLayout(words)};
 }
 async function createRecognizer(){
   const {createWorker, PSM}=require('tesseract.js');
@@ -105,9 +132,13 @@ async function createRecognizer(){
   return {async detectGtl(image) {
     const result=await worker.recognize(image);
     return isGtlHeader(result.data.text||'');
-  },async analyze(image,width,height) {
+  },async readBalance(image){
+    const result=await worker.recognize(image);
+    const found=String(result.data.text||'').match(/\$\s*([0-9][0-9.,]*)/);
+    return found?parseMoney(found[1]):null;
+  },async analyze(image,width,height,options={}) {
     const result=await worker.recognize(image,{}, {blocks:true,text:true});
-    return parseScreen(result.data,width,height,{gtlConfirmed:true});
+    return parseScreen(result.data,width,height,options);
   },close:()=>worker.terminate()};
 }
 module.exports={parseScreen,parseMoney,flattenWords,cleanWords,createRecognizer,normalized,overlayLayout,isGtlHeader};

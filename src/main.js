@@ -1,5 +1,5 @@
 'use strict';
-const {app,BrowserWindow,desktopCapturer,ipcMain,screen}=require('electron');
+const {app,BrowserWindow,desktopCapturer,ipcMain,screen,clipboard}=require('electron');
 const path=require('node:path');
 const crypto=require('node:crypto');
 const {openDatabase,identity}=require('./database');
@@ -7,16 +7,23 @@ const {evaluate}=require('./market');
 const {createRecognizer}=require('./recognition');
 const {locateWindow}=require('./window-locator');
 const {nextDelay,region,shouldCheckHeader}=require('./scan-policy');
+const {inspectThumbnail}=require('./frame-health');
+const {createDiagnostics}=require('./diagnostics');
 
 if(!app.requestSingleInstanceLock())app.quit();
-let dashboard,overlay,storage,recognizer,scanTimer,backupTimer;
+let dashboard,overlay,storage,recognizer,scanTimer,backupTimer,diagnostics;
 let sessionActive=false,sessionVersion=0,working=false,mode='idle';
-let headerHash='',tableHash='',lastHeaderCheckedAt=0,lastPublished=0,lastOverlayBounds='';
+let headerHash='',tableHash='',lastHeaderCheckedAt=0,lastTableCheckedAt=0,lastBalanceReadAt=0,
+  lastPublished=0,lastOverlayBounds='',startedAt=0,ocrFailures=0,emptyReads=0;
 let status={state:'inactivo',message:'Pulsa Play para iniciar.',running:false,recognized:0,latency:null};
 function broadcast(channel,payload){
   for(const w of [dashboard,overlay])if(w&&!w.isDestroyed())w.webContents.send(channel,payload);
 }
 function setStatus(patch){status={...status,...patch,running:sessionActive};broadcast('radar:status',status);}
+function track(stage,state,code,detail,ms=null){
+  if(!diagnostics)return;
+  if(diagnostics.record(stage,state,code,detail,ms))broadcast('radar:diagnostics',diagnostics.snapshot());
+}
 function protect(win){
   win.webContents.setWindowOpenHandler(()=>({action:'deny'}));
   win.webContents.on('will-navigate',e=>e.preventDefault());
@@ -112,93 +119,195 @@ function schedule(ms){
 }
 async function tick(){
   if(!sessionActive)return;
-  if(working){schedule(260);return;}
-  working=true;const version=sessionVersion,start=performance.now();
+  if(working){schedule(240);return;}
+  working=true;
+  const version=sessionVersion,start=performance.now();
+  let stage='window';
   try{
-    const active=mode==='gtl';
-    const source=await getGameSource(active);
+    const source=await getGameSource(mode==='gtl');
     if(!sessionActive||version!==sessionVersion)return;
     if(!source){
       mode='idle';headerHash='';tableHash='';
-      setStatus({state:'esperando',message:'Esperando PokéMMO.',recognized:0});
-      await showCompact();return;
+      track('window','warn','WIN-001','Ventana de PokéMMO no localizada');
+      track('capture','pending','CAP-000','Esperando la ventana del juego');
+      track('gtl','pending','GTL-000','Sin captura');
+      setStatus({state:'esperando',message:'Buscando PokéMMO...',recognized:0});
+      await showCompact('Buscando');return;
     }
-    const size=source.thumbnail.getSize();
+    track('window','ok','WIN-OK','PokéMMO localizado');
+    stage='capture';
+    const image=source.thumbnail,size=image.getSize(),health=inspectThumbnail(image);
+    if(!health.valid){
+      mode='idle';tableHash='';headerHash='';
+      track('capture','error',health.reason,'Captura vacía o sin imagen útil');
+      setStatus({state:'error',message:'No se recibió una imagen válida del juego.',recognized:0});
+      await showCompact('Sin imagen');return;
+    }
+    track('capture','ok','CAP-OK',size.width+' × '+size.height+' píxeles');
+    let visibleGtl=health.gtl;
+    // Pixel geometry detects the GTL before OCR, even when titles are unreadable.
+    if(!visibleGtl && mode!=='gtl'){
+      stage='ocr';
+      if(Date.now()-startedAt<3500){
+        track('gtl','pending','GTL-000','Buscando Servidor de Comercio');
+        setStatus({state:'capturada',message:'Pantalla captada · buscando GTL',recognized:0});
+        await showCompact('Captada');return;
+      }
+      const header=cropped(image,size.width,size.height,'header');
+      const fp=imageHash(header),now=Date.now();
+      if(shouldCheckHeader(fp,headerHash,lastHeaderCheckedAt,now)){
+        headerHash=fp;lastHeaderCheckedAt=now;
+        if(!recognizer){
+          track('ocr','pending','OCR-INIT','Preparando lector de texto');
+          recognizer=await createRecognizer();
+        }
+        visibleGtl=await recognizer.detectGtl(header);
+      }
+    }
+    if(!sessionActive||version!==sessionVersion)return;
+    if(!visibleGtl){
+      mode='idle';tableHash='';lastTableCheckedAt=0;
+      track('gtl','warn','GTL-000','Pantalla captada; GTL no detectado');
+      track('ocr','pending','OCR-000','Esperando anuncios');
+      setStatus({state:'capturada',message:'Pantalla captada · esperando GTL',recognized:0});
+      await showCompact('Captada');return;
+    }
+    const firstVisit=mode!=='gtl';
+    mode='gtl';
+    track('gtl','ok','GTL-OK','Servidor de Comercio visible ('+health.score+'/10 referencias)');
+    if(firstVisit){
+      tableHash='';lastTableCheckedAt=0;
+      setStatus({state:'buscando',message:'GTL detectado. Preparando lectura.',recognized:0});
+      await showCompact('GTL detectado');
+      return; // Next frame uses the full GTL resolution.
+    }
+    stage='ocr';
     if(!recognizer){
-      setStatus({state:'preparando',message:'Preparando lector visual.'});
+      track('ocr','pending','OCR-INIT','Preparando lector');
+      setStatus({state:'preparando',message:'Preparando lectura de anuncios...',recognized:0});
+      await showCompact('GTL · OCR');
       recognizer=await createRecognizer();
       if(!sessionActive||version!==sessionVersion)return;
     }
-    if(!active){
-      // Only OCR a small GTL header when outside the market.
-      const header=cropped(source.thumbnail,size.width,size.height,'header');
-      const fp=imageHash(header);
-      const now=Date.now();
-      if(!shouldCheckHeader(fp,headerHash,lastHeaderCheckedAt,now))return;
-      headerHash=fp;lastHeaderCheckedAt=now;
-      const found=await recognizer.detectGtl(header);
-      if(!sessionActive||version!==sessionVersion)return;
-      if(found){
-        mode='gtl';tableHash='';
-        setStatus({state:'buscando',message:'GTL detectado.',recognized:0});
-      }else setStatus({state:'esperando',message:'Radar listo. Entra al GTL.',recognized:0});
-      return;
-    }
-    const table=cropped(source.thumbnail,size.width,size.height,'table');
-    const fp=imageHash(table);
-    if(fp===tableHash)return;
-    tableHash=fp;
-    // Old recommendations must never remain displayed during a page change.
+    const rect=region(size.width,size.height,'market');
+    const market=image.crop(rect).toPNG(),fp=imageHash(market),now=Date.now();
+    if(!shouldCheckHeader(fp,tableHash,lastTableCheckedAt,now,8000))return;
+    tableHash=fp;lastTableCheckedAt=now;
+    // Clear out-of-date recommendations before starting an OCR pass.
     overlay?.hide();
-    const res=await recognizer.analyze(source.thumbnail.toPNG(),size.width,size.height);
+    setStatus({state:'leyendo',message:'GTL detectado · leyendo anuncios...',recognized:0});
     if(!sessionActive||version!==sessionVersion)return;
-    if(!res.gtl||res.advanced){
-      mode='idle';tableHash='';
-      // Remember this non-list screen so an open filter panel does not trigger
-      // repeated full OCR passes while it remains unchanged.
-      headerHash=imageHash(cropped(source.thumbnail,size.width,size.height,'header'));
-      lastHeaderCheckedAt=Date.now();
-      setStatus({state:res.advanced?'investigando':'esperando',
-        message:res.advanced?'Búsqueda avanzada.':'Radar listo. Entra al GTL.',recognized:0,
-        latency:Math.round(performance.now()-start)});
-      await showCompact();return;
+    // Balance is read from a separate small crop; GTL OCR excludes the top-left.
+    if(now-lastBalanceReadAt>10000||storage.latestBalance()===null){
+      const balanceRect=region(size.width,size.height,'balance');
+      const balance=await recognizer.readBalance(image.crop(balanceRect).toPNG());
+      lastBalanceReadAt=now;
+      if(Number.isSafeInteger(balance))storage.recordBalance(balance);
     }
-    if(Number.isSafeInteger(res.balance))storage.recordBalance(res.balance);
-    const context=res.context+'|'+res.sort;
-    const saved=storage.recordListings(res.rows,context,1);
-    const balance=storage.latestBalance();
-    const decisions=res.rows.map(row=>{
+    const ocrStart=performance.now();
+    const res=await recognizer.analyze(market,rect.width,rect.height,{
+      gtlConfirmed:health.gtl,
+      crop:{x:rect.x,y:rect.y,fullWidth:size.width,fullHeight:size.height}
+    });
+    ocrFailures=0;
+    if(!sessionActive||version!==sessionVersion)return;
+    const ocrTime=Math.round(performance.now()-ocrStart);
+    if(res.advanced){
+      track('ocr','pending','OCR-FILTROS','Búsqueda avanzada abierta',ocrTime);
+      setStatus({state:'investigando',message:'GTL detectado · ajustando filtros',recognized:0,latency:ocrTime});
+      await showCompact('Filtros GTL');return;
+    }
+    const rows=res.rows||[],partials=res.partialRows||[],balance=storage.latestBalance();
+    emptyReads=rows.length?0:emptyReads+1;
+    track('ocr',rows.length?'ok':emptyReads>=3?'error':'warn',rows.length?'OCR-OK':'OCR-001',
+      rows.length+'/10 completos; '+partials.length+' parciales; '+(res.wordCount||0)+' palabras',ocrTime);
+    stage='engine';
+    const decisions=[];
+    for(const row of rows){
       const p={...row,fingerprint:identity(row)};
       const ev=evaluate(p,storage.candidates(row.species),{balance});
-      if(saved)storage.recordRecommendation(p,ev,context);
-      return {rank:row.rank,decision:ev.decision,netEstimate:ev.netEstimate};
+      decisions.push({rank:row.rank,...ev});
+    }
+    // A certain budget exclusion is possible even without six readable IVs.
+    for(const row of partials){
+      if(!row.priceReliable||!Number.isSafeInteger(row.price))continue;
+      const ev=evaluate(row,[],{balance});
+      if(ev.reason==='RESERVA_30_POR_CIENTO')
+        decisions.push({rank:row.rank,decision:'NO_COMPRAR',reason:ev.reason});
+    }
+    const actionable=decisions.filter(d=>d.decision!=='SILENCIO').length;
+    track('engine',balance===null?'warn':'ok',balance===null?'ECO-001':'ECO-OK',
+      balance===null?'Saldo no reconocido':'Evaluadas '+rows.length+' ofertas; '+actionable+' decisiones');
+    stage='database';
+    const context=(res.context||'general')+'|'+(res.sort||'unknown');
+    const saved=storage.recordMarketScan({
+      rows,partialRows:partials,context,sort:res.sort||'unknown',
+      page:res.page??null,wordCount:res.wordCount||0,imageHash:fp
     });
+    if(!saved.duplicate){
+      diagnostics?.scan(rows.length,saved.saved);
+      track('database','ok','DB-OK',
+        saved.saved+' anuncios y '+saved.partial+' parciales almacenados');
+      for(const row of rows){
+        const ev=decisions.find(d=>d.rank===row.rank);
+        if(ev?.decision&&ev.decision!=='SILENCIO')
+          storage.recordRecommendation(row,ev,context);
+      }
+      publishData(true);
+    }else track('database','ok','DB-OK','Captura repetida; sin duplicar anuncios');
     if(!sessionActive||version!==sessionVersion)return;
+    // Reconfirm an actionable page before displaying labels next to BUY buttons.
+    if(actionable){
+      stage='capture';
+      const fresh=await getGameSource(true);
+      if(!fresh||fresh.thumbnail.isEmpty())return showCompact('GTL actualizado');
+      const bounds=fresh.thumbnail.getSize();
+      const check=imageHash(cropped(fresh.thumbnail,bounds.width,bounds.height,'market'));
+      if(check!==fp){
+        tableHash='';lastTableCheckedAt=0;
+        await showCompact('GTL actualizado');
+        setStatus({state:'buscando',message:'Los anuncios cambiaron; releyendo.',recognized:0});
+        return;
+      }
+    }
+    stage='overlay';
     await showResults(decisions,version,res.layout);
-    setStatus({state:'activo',message:res.rows.length+' de 10 anuncios leídos. '+(decisions.some(d=>d.decision==='COMPRAR')?'Oportunidades detectadas.':'Recopilando referencias.'),
-      recognized:res.rows.length,latency:Math.round(performance.now()-start)});
-    if(saved)publishData();
+    setStatus({state:'activo',
+      message:rows.length+'/10 leídos · '+saved.saved+' guardados'+
+        (actionable?' · '+actionable+' decisiones':' · recopilando precios'),
+      recognized:rows.length,latency:Math.round(performance.now()-start)});
   }catch(error){
     if(!sessionActive||version!==sessionVersion)return;
-    mode='idle';headerHash='';tableHash='';lastHeaderCheckedAt=0;
-    setStatus({state:'error',message:'Lectura pendiente de calibración: '+error.message,recognized:0,
+    const name=stage==='database'?'DB-001':stage==='ocr'?'OCR-002':
+      stage==='capture'?'CAP-001':stage==='window'?'WIN-002':'RAD-001';
+    const category=stage==='engine'?'engine':stage==='overlay'?'gtl':stage;
+    track(category,'error',name,error.message||String(error));
+    if(stage==='ocr'&&++ocrFailures>=3){
+      try{await recognizer?.close();}catch{}
+      recognizer=null;ocrFailures=0;
+    }
+    tableHash='';lastTableCheckedAt=0;
+    setStatus({state:'error',message:'Error '+name+' · consulta Diagnóstico',recognized:0,
       latency:Math.round(performance.now()-start)});
-    await showCompact();
+    await showCompact('Error '+name);
   }finally{
     working=false;
-    if(sessionActive&&version===sessionVersion)schedule(mode==='gtl'&&tableHash===''?60:nextDelay(mode));
+    if(sessionActive&&version===sessionVersion)schedule(nextDelay(mode));
   }
 }
 function stopSession(){
   sessionActive=false;sessionVersion++;clearTimeout(scanTimer);
-  mode='idle';headerHash='';tableHash='';lastHeaderCheckedAt=0;lastOverlayBounds='';
+  mode='idle';headerHash='';tableHash='';lastHeaderCheckedAt=0;lastTableCheckedAt=0;lastOverlayBounds='';
   overlay?.hide();
   setStatus({state:'inactivo',message:'Radar detenido.',recognized:0,latency:null});
 }
 async function startSession(){
   if(sessionActive)return {ok:true,running:true};
-  sessionActive=true;sessionVersion++;mode='idle';headerHash='';tableHash='';lastHeaderCheckedAt=0;
-  setStatus({state:'esperando',message:'Preparando radar.',recognized:0,latency:null});
+  sessionActive=true;sessionVersion++;startedAt=Date.now();
+  mode='idle';headerHash='';tableHash='';lastHeaderCheckedAt=0;lastTableCheckedAt=0;lastBalanceReadAt=0;emptyReads=0;
+  setStatus({state:'esperando',message:'Buscando pantalla de PokéMMO...',recognized:0,latency:null});
+  track('window','pending','WIN-000','Buscando PokéMMO');
+  track('capture','pending','CAP-000','Esperando imagen');
   // Passive overlay: never intercepts game clicks or keyboard focus.
   void showCompact();
   schedule(0);
@@ -207,8 +316,13 @@ async function startSession(){
 function handlers(){
   ipcMain.handle('radar:getState',()=>({status,settings:storage.settings(),summary:storage.summary(),
     recent:storage.recent(),history:storage.history(),trades:storage.transactionHistory(),
-    balance:storage.latestBalance()}));
+    balance:storage.latestBalance(),diagnostics:diagnostics?.snapshot()}));
   ipcMain.handle('radar:play',()=>startSession());
+  ipcMain.handle('radar:diagnostics',()=>diagnostics?.snapshot()||null);
+  ipcMain.handle('radar:copyDiagnostics',()=>{
+    if(!diagnostics)return {ok:false};
+    clipboard.writeText(diagnostics.report());return {ok:true};
+  });
   ipcMain.handle('radar:stop',()=>{stopSession();return {ok:true,running:false};});
   ipcMain.handle('radar:settings',(_e,changes)=>{
     if(!changes||typeof changes!=='object'||Array.isArray(changes))throw Error('Configuración inválida');
@@ -228,6 +342,8 @@ app.whenReady().then(async()=>{
   }
   // Previous installations must not restart capture without Play.
   if(storage.settings().captureEnabled)storage.applySettings({captureEnabled:false});
+  diagnostics=createDiagnostics(app.getPath('userData'));
+  track('database','ok','DB-OK','SQLite abierto y verificado');
   createWindows();handlers();
   setTimeout(()=>publishData(true),600);
   storage.saveBackup().catch(error=>setStatus({state:'error',message:'Respaldo: '+error.message}));

@@ -22,7 +22,7 @@ function renderStatus(s){
   current.status=s;const running=!!s.running;
   $('play').disabled=running;$('stop').disabled=!running;
   const badge=$('status-badge');
-  badge.textContent=running?(s.state==='activo'?'GTL ACTIVO':'EN ESPERA'):'DETENIDO';
+  badge.textContent=running?(s.state==='activo'?'GTL ACTIVO':s.state==='capturada'?'PANTALLA CAPTADA':s.state==='error'?'REVISAR':'EN ESPERA'):'DETENIDO';
   badge.className='state'+(running?' on':'')+(s.state==='error'?' bad':'');
   $('state-message').textContent=s.message||'Radar listo.';
   $('latency').textContent=Number.isFinite(s.latency)?s.latency+' ms · '+(s.recognized||0)+' anuncios':'';
@@ -61,7 +61,7 @@ function renderData(data){
 $('play').addEventListener('click',async()=>{
   notice('');
   try{await window.radar.play();window.radar.minimize();}
-  catch(e){notice(e.message);navigate('ajustes');}
+  catch(e){notice('No se pudo iniciar el radar. Revisa Diagnóstico.');navigate('diagnostico');}
 });
 $('stop').addEventListener('click',async()=>{
   notice('');try{await window.radar.stop();}catch(e){notice(e.message);}
@@ -81,3 +81,35 @@ window.radar.on('radar:status',renderStatus);
 window.radar.on('radar:data',renderData);
 window.radar.getState().then(data=>{renderStatus(data.status);renderData(data);})
   .catch(e=>notice('No se pudo iniciar: '+e.message));
+
+function renderDiagnostics(info){
+  if(!info)return;
+  const counts=info.counts||{};
+  $('diag-count').textContent=(counts.scans||0)+' lecturas · '+(counts.saved||0)+' guardados';
+  const host=$('diag-stages');host.replaceChildren();
+  for(const step of info.stages||[]){
+    const row=document.createElement('div');row.className='diag-row';
+    const dot=document.createElement('span');dot.className='diag-dot '+(step.state||'pending');
+    const details=document.createElement('div');details.className='diag-info';
+    const title=document.createElement('strong');title.textContent=step.label||step.id;
+    const subtitle=document.createElement('small');subtitle.textContent=step.detail||'';
+    details.append(title,subtitle);
+    const code=document.createElement('span');code.className='diag-code';
+    code.textContent=step.code||'PENDIENTE';
+    row.append(dot,details,code);host.append(row);
+  }
+  const errors=$('diag-errors');errors.replaceChildren();
+  for(const event of info.events||[]){
+    const entry=itemNode(event.code||'Error',event.detail||'');
+    errors.append(entry);
+  }
+  if(!errors.childElementCount)errors.textContent='Sin errores registrados.';
+}
+window.radar.on('radar:diagnostics',renderDiagnostics);
+$('copy-diag').addEventListener('click',async()=>{
+  try{
+    const response=await window.radar.copyDiagnostics();
+    $('diag-feedback').textContent=response.ok?'Informe copiado.':'No se pudo copiar.';
+  }catch(error){$('diag-feedback').textContent='No se pudo copiar el diagnóstico.';}
+});
+window.radar.getDiagnostics().then(renderDiagnostics).catch(()=>{});

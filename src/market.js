@@ -43,10 +43,12 @@ function availableToSpend(balance, reserved = 0) {
 }
 function evaluate(listing, samples = [], { balance = null, listingFee = null, pendingSpend = 0, now = Date.now() } = {}) {
   const unknown = (reason, extra = {}) => ({decision: 'SILENCIO', reason, confidence: 0, ...extra});
-  if (!validListing(listing)) return unknown('LECTURA_INCOMPLETA');
+  if (!listing || !validPrice(listing.price)) return unknown('PRECIO_NO_LEIDO');
   const spendable = availableToSpend(balance, pendingSpend);
   if (spendable === null) return unknown('SALDO_NO_CONFIRMADO');
+  // The liquidity exclusion needs only a reliable price, not all 6 IVs.
   if (listing.price > spendable) return {decision:'NO_COMPRAR', reason:'RESERVA_30_POR_CIENTO', confidence:1, spendable};
+  if (!validListing(listing)) return unknown('LECTURA_INCOMPLETA');
   const cutoff = now - MAX_SAMPLE_AGE_DAYS * 86_400_000;
   const comparableRows = samples.filter(s => validListing(s) && s.lastSeen >= cutoff && s.lastSeen <= now && comparable(listing,s));
   // Deduplicate by ad signature; do not count repeated sightings as independent prices.

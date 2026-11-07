@@ -27,5 +27,13 @@ input,select{border:1px solid #dbe3eb;background:#fff;color:#25374c;border-radiu
 .secondary{background:#e4f3e9;color:#176b45;border:0;border-radius:8px;padding:10px 15px;font-weight:700}
 .settings{display:grid;gap:10px}.line{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:10px 0;border-bottom:1px solid #eff2f5}.line input:not([type=checkbox]){width:180px}.line input[type=checkbox]{width:19px;height:19px;accent-color:#27865b}
 .settings .secondary{justify-self:end}.settings .hint{margin:0}
+.diag-list{display:grid;gap:2px}
+.diag-row{padding:10px 2px;border-bottom:1px solid #eef1f5;display:flex;align-items:center;gap:12px}
+.diag-dot{width:10px;height:10px;border-radius:50%;background:#cbd5df;flex:none}
+.diag-dot.ok{background:#259367}.diag-dot.warn{background:#d19a39}.diag-dot.error{background:#ce4e4e}
+.diag-info{flex:1;min-width:0}.diag-info strong{display:block;font-size:13px}
+.diag-info small{color:#7d8b9c;font-size:11px;display:block;margin-top:3px}
+.diag-code{font-size:10px;color:#8290a0;white-space:nowrap}
+.diag-copy{margin-top:12px}
 #notice{color:#a55218;font-size:12px;margin-top:8px;min-height:15px}
 @media(max-width:700px){main{padding:13px}.top{padding:13px}.metrics article{padding:12px}.metrics strong{font-size:19px}.trade{grid-template-columns:1fr 1fr}.trade button{grid-column:span 2}.playbar{flex-wrap:wrap}.actions{width:100%}.actions button{flex:1}}

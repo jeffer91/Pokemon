@@ -14,7 +14,7 @@ function openDatabase(folder) {
   const db = new DatabaseSync(filename);
   db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=3000;');
   const version=db.prepare('PRAGMA user_version').get().user_version;
-  if(version > 1) throw new Error('Esta base requiere una versión más reciente de PokéRadar.');
+  if(version > 2) throw new Error('Esta base requiere una versión más reciente de PokéRadar.');
   if(version < 1) {
     db.exec(`BEGIN IMMEDIATE;
       CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -43,6 +43,28 @@ function openDatabase(folder) {
         id INTEGER PRIMARY KEY AUTOINCREMENT, amount INTEGER NOT NULL CHECK(amount>=0), seen_at INTEGER NOT NULL,
         source TEXT NOT NULL);
       PRAGMA user_version=1; COMMIT;`);
+  }
+  // Upgrade in place. Existing prices, transactions and historical data are preserved.
+  if(version < 2){
+    db.exec('BEGIN IMMEDIATE');
+    try{
+      db.exec(`CREATE TABLE IF NOT EXISTS scan_batches(
+        id INTEGER PRIMARY KEY AUTOINCREMENT, seen_at INTEGER NOT NULL,
+        image_hash TEXT NOT NULL, search_context TEXT NOT NULL,
+        sort_order TEXT NOT NULL, page_number INTEGER,
+        valid_count INTEGER NOT NULL CHECK(valid_count>=0),
+        partial_count INTEGER NOT NULL CHECK(partial_count>=0),
+        ocr_word_count INTEGER NOT NULL CHECK(ocr_word_count>=0));
+        CREATE INDEX IF NOT EXISTS idx_scans_recent ON scan_batches(seen_at);
+        CREATE TABLE IF NOT EXISTS partial_reads(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        scan_id INTEGER NOT NULL REFERENCES scan_batches(id) ON DELETE CASCADE,
+        rank_number INTEGER NOT NULL CHECK(rank_number BETWEEN 1 AND 10),
+        reason TEXT NOT NULL, fields_json TEXT NOT NULL);
+        CREATE INDEX IF NOT EXISTS idx_partials_scan ON partial_reads(scan_id);
+        PRAGMA user_version=2;`);
+      db.exec('COMMIT');
+    }catch(error){db.exec('ROLLBACK');throw error;}
   }
   const check=db.prepare('PRAGMA quick_check').get();
   if(Object.values(check)[0] !== 'ok') throw new Error('La base SQLite no superó la comprobación de integridad.');
@@ -81,6 +103,38 @@ function openDatabase(folder) {
       db.exec('COMMIT');lastScanKey=scanKey;lastScanTime=now;return valid.length;
     }catch(e){db.exec('ROLLBACK');throw e;}
   }
+  const addBatch=db.prepare(`INSERT INTO scan_batches
+    (seen_at,image_hash,search_context,sort_order,page_number,valid_count,partial_count,ocr_word_count)
+    VALUES(?,?,?,?,?,?,?,?)`);
+  const addPartial=db.prepare(`INSERT INTO partial_reads(scan_id,rank_number,reason,fields_json) VALUES(?,?,?,?)`);
+  let lastBatchHash='',lastBatchAt=0;
+  function recordMarketScan({rows=[],partialRows=[],context='general',sort='unknown',page=null,wordCount=0,imageHash=''}={}){
+    const now=Date.now(), valid=rows.filter(validListing);
+    const acceptedPartials=partialRows.filter(r=>r&&Number.isInteger(r.rank)&&r.rank>=1&&r.rank<=10).slice(0,10);
+    const key=crypto.createHash('sha1').update(JSON.stringify([valid,acceptedPartials,context,sort,page])).digest('hex');
+    if(key===lastBatchHash&&now-lastBatchAt<10_000)return {saved:0,partial:0,duplicate:true};
+    db.exec('BEGIN IMMEDIATE');
+    try{
+      const batch=addBatch.run(now,String(imageHash).slice(0,64),String(context).slice(0,500),
+        String(sort).slice(0,30),Number.isSafeInteger(page)&&page>0?page:null,
+        valid.length,acceptedPartials.length,Math.max(0,Math.trunc(wordCount||0)));
+      for(const row of valid){
+        const fp=identity(row);
+        addListing.run(fp,row.species,row.level,row.nature,row.sex||null,row.price,JSON.stringify(row.ivs),
+          now,now,String(row.age||'').slice(0,50));
+        addObservation.run(fp,now,String(context).slice(0,500),Number.isSafeInteger(page)?page:null,row.rank||null);
+      }
+      for(const item of acceptedPartials){
+        const fields={species:item.species||null,level:item.level??null,nature:item.nature||null,
+          price:item.price??null,ivs:item.ivs||[],sex:item.sex||'?',rank:item.rank};
+        addPartial.run(batch.lastInsertRowid,item.rank,String(item.missing||'ILEGIBLE').slice(0,40),
+          JSON.stringify(fields).slice(0,800));
+      }
+      db.exec('COMMIT');
+      lastBatchHash=key;lastBatchAt=now;
+      return {saved:valid.length,partial:acceptedPartials.length,duplicate:false};
+    }catch(e){db.exec('ROLLBACK');throw e;}
+  }
   function candidates(species) {
     return db.prepare('SELECT * FROM listings WHERE lower(species)=lower(?) AND last_seen >= ? ORDER BY last_seen DESC LIMIT 250')
       .all(species,Date.now()-7*86_400_000).map(r=>({...r, ivs:JSON.parse(r.ivs_json),lastSeen:r.last_seen}));
@@ -115,11 +169,14 @@ function openDatabase(folder) {
   }
   function transactionHistory(){return db.prepare('SELECT * FROM transactions ORDER BY id DESC LIMIT 50').all();}
   function summary(){const s=stats();return {...s,research:researchSuggestions(s),observations:db.prepare('SELECT count(*) n FROM observations').get().n,
-    decisions:db.prepare('SELECT count(*) n FROM recommendations').get().n, transactions:db.prepare('SELECT count(*) n FROM transactions').get().n};}
+    decisions:db.prepare('SELECT count(*) n FROM recommendations').get().n,
+    scans:db.prepare('SELECT count(*) n FROM scan_batches').get().n,
+    partials:db.prepare('SELECT count(*) n FROM partial_reads').get().n,
+    transactions:db.prepare('SELECT count(*) n FROM transactions').get().n};}
   async function saveBackup(){const dest=path.join(folder,'backups');fs.mkdirSync(dest,{recursive:true});
     const file=path.join(dest,`pokeradar-${new Date().toISOString().slice(0,10)}.sqlite`);
     if(!fs.existsSync(file)) await backup(db,file);return file;}
-  return {db,filename,settings:getSettings,applySettings,recordListings,candidates,recordRecommendation,
+  return {db,filename,settings:getSettings,applySettings,recordListings,recordMarketScan,candidates,recordRecommendation,
     recordBalance,latestBalance,recent,history,stats,summary,addTransaction,transactionHistory,saveBackup,close:()=>db.close()};
 }
 module.exports={openDatabase,identity,DEFAULT_SETTINGS};

@@ -14,7 +14,7 @@
   </div>
   <nav aria-label="Secciones">
     <button class="tab active" data-tab="radar">Radar</button><button class="tab" data-tab="buscar">Buscar</button>
-    <button class="tab" data-tab="historial">Historial</button><button class="tab" data-tab="ajustes">Ajustes</button>
+    <button class="tab" data-tab="historial">Historial</button><button class="tab" data-tab="diagnostico">Diagnóstico</button><button class="tab" data-tab="ajustes">Ajustes</button>
   </nav>
   <section class="page" data-page="radar">
     <div class="metrics">
@@ -43,6 +43,18 @@
         <input id="trade-fee" type="number" placeholder="Cuota ¥" aria-label="Cuota" value="0" min="0" required>
         <button type="submit" class="secondary">Guardar</button>
       </form><div class="hint" id="trade-feedback"></div><div class="entries" id="trades"></div>
+    </div>
+  </section>
+  <section class="page" data-page="diagnostico" hidden>
+    <div class="panel">
+      <div class="heading"><h2>Estado del radar</h2><span id="diag-count">0 lecturas</span></div>
+      <div id="diag-stages" class="diag-list"></div>
+    </div>
+    <div class="panel">
+      <div class="heading"><h2>Errores recientes</h2></div>
+      <div id="diag-errors" class="entries">Sin errores registrados.</div>
+      <button id="copy-diag" class="secondary diag-copy" type="button">Copiar diagnóstico</button>
+      <p class="hint" id="diag-feedback">Sin capturas guardadas ni datos del chat.</p>
     </div>
   </section>
   <section class="page" data-page="ajustes" hidden>

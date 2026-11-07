@@ -29,3 +29,13 @@ test('rechaza cambios de configuración y transacciones inválidas',()=>{
   assert.throws(()=>db.addTransaction({kind:'BUY',species:'Gible',price:-5,fee:0}));
   assert.equal(db.summary().total,0);db.close();fs.rmSync(folder,{recursive:true,force:true});
 });
+
+test('SQLite v2 retains verified listings and records partial OCR without mixing prices',()=>{
+  const folder=fs.mkdtempSync(path.join(os.tmpdir(),'radar-v2-'));
+  const db=openDatabase(folder);
+  const scan=db.recordMarketScan({rows:[{...p(),rank:4}],partialRows:[{rank:5,species:'Gible',price:12000,ivs:[31,null,null,null,null,null],missing:'IV_INCOMPLETOS'}],context:'GTL|newest',sort:'newest',wordCount:65,imageHash:'abc'});
+  assert.equal(scan.saved,1);assert.equal(scan.partial,1);
+  assert.equal(db.summary().total,1);assert.equal(db.summary().scans,1);assert.equal(db.summary().partials,1);
+  assert.equal(db.db.prepare('PRAGMA user_version').get().user_version,2);
+  db.close();fs.rmSync(folder,{recursive:true,force:true});
+});

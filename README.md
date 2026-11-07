@@ -60,3 +60,13 @@ La ventana flotante no recibe clics. La app no hace clic, no automatiza compras,
 - **GTL N/10**: se reconocieron N filas; si no aparecen decisiones todavía, faltan datos comparables o saldo confiable. No se inventan recomendaciones.
 
 La pestaña pequeña se sitúa en el espacio libre dentro de la ventana del juego, evitando los controles de Windows.
+
+## v0.3.0: captura comprobada y diagnóstico automático
+
+1. Pulsa **Play**. El estado cambia a **Pantalla captada** solo cuando se recibe una imagen útil de PokéMMO, no por crear una ventana flotante.
+2. Abre **GTL → Anuncios de Pokémon**. Un detector de geometría y color, contrastado con capturas de noviembre de 2026, intenta identificar el mercado incluso si el OCR del título falla.
+3. La pestaña flotante muestra **GTL N/10** cuando hay N filas completas. Los resultados NO COMPRAR por presupuesto pueden emitirse cuando el precio es legible, incluso si falta algún IV. COMPRAR exige precios comparables.
+4. En la pestaña **Diagnóstico** se comprueban Ventana, Captura, GTL, OCR, Base SQLite y Evaluación. **Copiar diagnóstico** genera un informe técnico con códigos y tiempos sin guardar pantallas ni conversaciones.
+5. SQLite migra automáticamente del esquema 1 al 2 preservando todo el historial. Conserva cada barrido y las filas parciales en tablas separadas para no contaminar los precios válidos. Las páginas que no puede identificar quedan como desconocidas, no como página 1.
+
+El OCR sigue necesitando calibración y pruebas en tu Windows 11. El objetivo de respuesta inferior a un segundo no está garantizado. La comisión continúa siendo una estimación conservadora, no una tarifa oficial verificada.
