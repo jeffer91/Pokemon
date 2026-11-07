@@ -75,7 +75,12 @@ async function createRecognizer(){
   if(!fs.existsSync(path.join(languageFolder,'spa.traineddata.gz'))) throw Error('No encuentro los datos OCR de español. Reinstala dependencias.');
   const worker=await createWorker('spa',1,{langPath:languageFolder,cacheMethod:'none'});
   await worker.setParameters({tessedit_pageseg_mode:PSM.SPARSE_TEXT,preserve_interword_spaces:'1'});
-  return {async analyze(image,width,height) {
+  return {async detectGtl(image) {
+    const result=await worker.recognize(image);
+    const text=normalized(result.data.text||'');
+    return (text.includes('comercio')||text.includes('gtl')) &&
+      (text.includes('anuncios')||text.includes('pokemon')||text.includes('comprar')||text.includes('busqueda'));
+  },async analyze(image,width,height) {
     const result=await worker.recognize(image,{}, {blocks:true,text:true});
     return parseScreen(result.data,width,height);
   },close:()=>worker.terminate()};

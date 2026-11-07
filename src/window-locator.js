@@ -34,17 +34,19 @@ public static class RadarWindow {
 '@
 [RadarWindow]::Get()
 `;
-let last=null,lastAt=0;
+let last=null,lastAt=0,inFlight=null;
 async function locateWindow(){
   if(process.platform!=='win32')return null;
-  if(Date.now()-lastAt<4000)return last;
+  if(Date.now()-lastAt<12000)return last;
+  if(inFlight)return inFlight;
   lastAt=Date.now();
-  try{
+  inFlight=(async()=>{try{
     const b64=Buffer.from(script,'utf16le').toString('base64');
     const {stdout}=await execFileAsync('powershell.exe',['-NoProfile','-NonInteractive','-EncodedCommand',b64],{timeout:3500,windowsHide:true});
     const p=stdout.trim().split(',').map(Number);
     if(p.length!==4||!p.every(Number.isFinite)||p[2]<400||p[3]<300){last=null;return null;}
     last={x:p[0],y:p[1],width:p[2],height:p[3]};return last;
-  }catch{last=null;return null;}
+  }catch{last=null;return null;}})();
+  try{return await inFlight;}finally{inFlight=null;}
 }
 module.exports={locateWindow};

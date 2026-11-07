@@ -1,20 +1,62 @@
-<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; object-src 'none'">
-<title>PokéRadar GTL</title><link rel="stylesheet" href="style.css"></head><body>
-<header class="top"><div class="brand"><span class="orb">◉</span><div><strong>PokéRadar <span class="accent">GTL</span></strong><small>Mercado inteligente · Fase 1</small></div></div>
-<div class="toolbar"><span id="status-badge" class="pill">DESACTIVADO</span><button id="minimize" class="outline">Minimizar</button></div></header>
-<main><section class="hero"><div><p class="eyebrow">CONTROL DE MERCADO</p><h1>Compra con datos,<br><span>no con suposiciones.</span></h1><p>Observa anuncios del GTL, construye una referencia local y evalúa el margen neto sin arriesgar tu reserva del 30 %.</p></div>
-<div class="readout"><span>ESTADO DEL RADAR</span><strong id="state-message">Iniciando…</strong><small id="latency">Esperando datos</small></div></section>
-<section class="security card"><div><h2>Lectura visual del juego</h2><p>PokéMMO prohíbe automatización y herramientas que concedan ventajas injustas. No se ha confirmado que este radar esté permitido. No controla el juego; verifica primero la autorización con soporte.</p>
-<label class="consent"><input id="consent" type="checkbox"> He verificado las reglas y asumo la decisión de habilitar la lectura visual.</label></div><button id="toggle" class="primary" disabled>Habilitar radar</button></section>
-<section class="metrics"><article class="metric card"><small>Anuncios distintos</small><strong id="total">0</strong><span>base local</span></article><article class="metric card"><small>Observaciones</small><strong id="observations">0</strong><span>historial GTL</span></article><article class="metric card"><small>Evaluaciones</small><strong id="decisions">0</strong><span>registradas</span></article><article class="metric card"><small>Saldo reconocido</small><strong id="balance">—</strong><span>reserva del 30 %</span></article></section>
-<section class="cols"><article class="card panel"><div class="section-head"><h2>Búsquedas recomendadas</h2><span>Investigación guiada</span></div><p class="help">Realiza estas búsquedas tú mismo en el GTL. El radar registra únicamente lo que consigue leer con suficiente certeza.</p><div id="suggestions" class="tasks"></div></article>
-<article class="card panel"><div class="section-head"><h2>Reglas económicas</h2><span>Configuración local</span></div><label class="field">Cuota estimada de publicación GTL (¥)<input id="fee" type="number" min="0" max="25000" step="1" placeholder="Configurar cuota"></label>
-<p class="help">La tarifa del GTL depende del precio. Antes de considerar una oferta, introduce una estimación conservadora verificada en el juego; un valor fijo podría subestimar costes.</p>
-<div class="setting"><span>Reserva mínima</span><strong>30 %</strong></div><div class="setting"><span>Beneficio neto objetivo</span><strong>≥ 1.000 ¥</strong></div><div class="setting"><span>Comparables requeridos</span><strong>≥ 5</strong></div>
-<div class="setting"><span>Desplazamiento X / Y del panel</span><div class="xy"><input id="offset-x" type="number" step="5" placeholder="X" value="0"><input id="offset-y" type="number" step="5" placeholder="Y" value="0"></div></div><button id="save" class="outline full">Guardar configuración</button></article></section>
-<section class="card panel"><div class="section-head"><h2>Últimos Pokémon observados</h2><span>Datos locales, no ventas confirmadas</span></div><div class="scroll"><table><thead><tr><th>Pokémon</th><th>Nivel</th><th>Naturaleza</th><th>IVs</th><th>Precio</th><th>Última observación</th></tr></thead><tbody id="listings"><tr><td colspan="6">Sin observaciones todavía</td></tr></tbody></table></div></section>
-<section class="cols bottom"><article class="card panel"><div class="section-head"><h2>Historial de decisiones</h2><span>Auditable</span></div><div id="history" class="small-list">Aún no hay recomendaciones confiables.</div></article>
-<article class="card panel"><div class="section-head"><h2>Operaciones confirmadas</h2><span>Registro manual</span></div><form id="trade-form" class="trade"><select id="trade-kind" aria-label="Tipo de operación"><option value="BUY">Compra</option><option value="SELL">Venta</option></select><input id="trade-species" placeholder="Pokémon" required maxlength="40"><input id="trade-price" placeholder="Precio ¥" type="number" min="1" required><input id="trade-fee" placeholder="Cuota ¥" type="number" value="0" min="0" required><button type="submit" class="primary">Registrar</button></form><p class="help" id="trade-feedback">Una desaparición del anuncio no cuenta como venta.</p><div id="trades" class="small-list"></div></article></section>
-<footer>Datos procesados localmente en tu PC · Sin compras automáticas · Sin envío de anuncios a servidores externos</footer></main>
+<title>PokéRadar</title><link rel="stylesheet" href="style.css"></head>
+<body>
+<header class="top">
+  <div class="brand"><span class="logo">◉</span><div><strong>PokéRadar</strong><small>GTL</small></div></div>
+  <span class="state" id="status-badge">DETENIDO</span>
+</header>
+<main>
+  <div class="playbar">
+    <div class="playinfo"><strong id="state-message">Pulsa Play para iniciar.</strong><small id="latency">Listo</small></div>
+    <div class="actions"><button id="play" class="play"><span aria-hidden="true">▶</span> Play</button><button id="stop" class="stop" disabled>■ Stop</button></div>
+  </div>
+  <nav aria-label="Secciones">
+    <button class="tab active" data-tab="radar">Radar</button><button class="tab" data-tab="buscar">Buscar</button>
+    <button class="tab" data-tab="historial">Historial</button><button class="tab" data-tab="ajustes">Ajustes</button>
+  </nav>
+  <section class="page" data-page="radar">
+    <div class="metrics">
+      <article><small>Pokémon</small><strong id="total">0</strong></article>
+      <article><small>Lecturas</small><strong id="observations">0</strong></article>
+      <article><small>Saldo</small><strong id="balance">—</strong></article>
+    </div>
+    <div class="panel">
+      <div class="heading"><h2>Últimos anuncios</h2><span id="decisions">0</span></div>
+      <div class="scroll"><table><thead><tr><th>Pokémon</th><th>IV</th><th>Precio</th></tr></thead>
+      <tbody id="listings"><tr><td colspan="3">Sin datos todavía</td></tr></tbody></table></div>
+    </div>
+    <div class="tip" id="radar-tip">La base se alimentará mientras revisas el GTL.</div>
+  </section>
+  <section class="page" data-page="buscar" hidden>
+    <div class="panel"><div class="heading"><h2>Búsquedas sugeridas</h2><span>GTL</span></div>
+    <div id="suggestions" class="tasks"></div></div>
+  </section>
+  <section class="page" data-page="historial" hidden>
+    <div class="panel"><div class="heading"><h2>Decisiones</h2></div><div id="history" class="entries">Aún no hay datos.</div></div>
+    <div class="panel"><div class="heading"><h2>Compras y ventas</h2></div>
+      <form id="trade-form" class="trade">
+        <select id="trade-kind" aria-label="Operación"><option value="BUY">Compra</option><option value="SELL">Venta</option></select>
+        <input id="trade-species" placeholder="Pokémon" aria-label="Pokémon" required maxlength="40">
+        <input id="trade-price" type="number" placeholder="Precio ¥" aria-label="Precio" required min="1">
+        <input id="trade-fee" type="number" placeholder="Cuota ¥" aria-label="Cuota" value="0" min="0" required>
+        <button type="submit" class="secondary">Guardar</button>
+      </form><div class="hint" id="trade-feedback"></div><div class="entries" id="trades"></div>
+    </div>
+  </section>
+  <section class="page" data-page="ajustes" hidden>
+    <div class="panel settings">
+      <div class="heading"><h2>Preferencias</h2></div>
+      <label class="line"><span>Reserva de saldo</span><strong>30 %</strong></label>
+      <label class="line"><span>Cuota GTL estimada (¥)</span><input id="fee" type="number" min="0" max="25000" placeholder="Sin configurar"></label>
+      <label class="line"><span>Posición horizontal</span><input id="offset-x" type="number" step="5" value="0"></label>
+      <label class="line"><span>Posición vertical</span><input id="offset-y" type="number" step="5" value="0"></label>
+      <label class="line"><span>Lectura visual</span><input type="checkbox" id="consent" aria-label="Confirmo que verifiqué las reglas aplicables al juego"></label>
+      <p class="hint">La lectura requiere confirmar que revisaste las condiciones del juego. No realiza compras ni clics. Verifica la cuota en el GTL.</p>
+      <button id="save" class="secondary">Guardar ajustes</button>
+    </div>
+  </section>
+  <div id="notice" role="status" aria-live="polite"></div>
+</main>
 <script src="app.js"></script></body></html>

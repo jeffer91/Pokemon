@@ -3,6 +3,8 @@ const {contextBridge,ipcRenderer}=require('electron');
 const allowedEvents=new Set(['radar:status','radar:data','radar:overlay']);
 contextBridge.exposeInMainWorld('radar',{
   getState:()=>ipcRenderer.invoke('radar:getState'),
+  play:()=>ipcRenderer.invoke('radar:play'),
+  stop:()=>ipcRenderer.invoke('radar:stop'),
   settings:changes=>ipcRenderer.invoke('radar:settings',changes),
   history:()=>ipcRenderer.invoke('radar:history'),
   recordTrade:trade=>ipcRenderer.invoke('radar:trade',trade),
