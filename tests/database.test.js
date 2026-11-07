@@ -106,6 +106,8 @@ test('SQLite persists editable targets and matches filtered ideal market prices'
     assert.equal(priced.direct.samples,1);
     assert.equal(priced.direct.min,25500);
     assert.equal(priced.breeding.samples,1);
+    assert.equal(priced.directOffers[0].price,25500);
+    assert.equal(priced.directOffers[0].verified,true);
   }finally{Date.now=original;}
   db.close();
   db=openDatabase(dir);

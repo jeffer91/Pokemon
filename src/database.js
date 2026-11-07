@@ -4,7 +4,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const crypto = require('node:crypto');
 const {validListing, researchSuggestions} = require('./market');
-const {validateOverrides,priceSummary}=require('./team');
+const {validateOverrides,priceSummary,matchProfile}=require('./team');
 
 const DEFAULT_SETTINGS = {listingFee:null, captureEnabled:false, reserveRatio:0.30,
   overlayX:0, overlayY:0, overlayScale:1, consentConfirmed:false, captureEngine:null, teamOverrides:{}};
@@ -195,8 +195,16 @@ function openDatabase(folder) {
       const rows=pricesForSpecies.all(profile.searchSpecies,cutoff);
       const direct=priceSummary(rows,profile,'direct');
       const breeding=priceSummary(rows,profile,'breed');
+      const matched=mode=>rows.filter(r=>matchProfile({...r,ivs:JSON.parse(r.ivs_json)},
+        profile,{mode,strictLevel:mode==='direct'}))
+        .sort((a,b)=>(b.verified-a.verified)||a.price-b.price)
+        .slice(0,20)
+        .map(r=>({species:r.species,level:r.level,nature:r.nature,sex:r.sex,
+          price:r.price,ivs:JSON.parse(r.ivs_json),verified:r.verified===1,
+          lastSeen:r.last_seen}));
       return {id:profile.id,name:profile.name,searchSpecies:profile.searchSpecies,
-        direct,breeding,unverified:rows.filter(r=>r.verified!==1).length,
+        direct,breeding,directOffers:matched('direct'),breedingOffers:matched('breed'),
+        unverified:rows.filter(r=>r.verified!==1).length,
         historicalQuote:profile.historicalQuote||null};
     });
   }

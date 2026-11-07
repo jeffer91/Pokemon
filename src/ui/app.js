@@ -279,6 +279,26 @@ function drawPrices(){
     td.colSpan=5;td.textContent='Todavía no hay objetivos disponibles.';
     tr.append(td);body.append(tr);
   }
+  const offers=$('ideal-offers');offers.replaceChildren();
+  const allOffers=items.flatMap(item=>(mode==='breed'?item.breedingOffers:item.directOffers||[])
+    .map(row=>({...row,target:item.name})));
+  allOffers.sort((a,b)=>Number(b.verified)-Number(a.verified)||a.price-b.price);
+  for(const row of allOffers.slice(0,35)){
+    const tr=document.createElement('tr');
+    const values=[row.target+' · '+row.species,row.nature,
+      (row.ivs||[]).map((v,i)=>v===31?IV_LABELS[i]:null).filter(Boolean).join(' · ')||'Sin IV 31',
+      'Nv. '+row.level,currency(row.price),
+      row.verified?'Verificado':'Pendiente',stamp(row.lastSeen)];
+    for(const text of values){
+      const td=document.createElement('td');td.textContent=text;tr.append(td);
+    }
+    offers.append(tr);
+  }
+  if(!offers.childElementCount){
+    const tr=document.createElement('tr'),td=document.createElement('td');
+    td.colSpan=7;td.textContent='No hay anuncios que coincidan con estos filtros.';
+    tr.append(td);offers.append(tr);
+  }
   const pending=items.reduce((sum,row)=>sum+(row.unverified||0),0);
   $('price-note').textContent='Solo comparables verificados · '+pending+
     ' registros recientes pendientes. Sheets es histórico, no mercado en vivo.';
