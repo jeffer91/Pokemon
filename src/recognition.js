@@ -96,11 +96,13 @@ function parseScreen(data,width,height,options={}) {
     const y=grid.top+i*grid.step;
     const row=fieldWords(words,.20,.80,y-.019,y+.019);
     if(row.length<3)continue;
-    const rawName=join(fieldWords(row,.257,.365,0,1));
+    const nameWords=fieldWords(row,.257,.365,0,1);
+    const rawName=join(nameWords);
     const match=rawName.match(/^(?:Nv[.,:]?\s*)?(\d{1,3})\s*(\p{L}[\p{L}\p{M}.'’\-\s]*)/iu);
     const level=match?Number(match[1]):null;
     const species=match?cleanupName(match[2].replace(/[^\p{L}\p{M}.'’\-\s]/gu,'')):null;
-    const nature=normalized(join(fieldWords(row,.365,.410,0,1))).replace(/[^\p{L}\s]/gu,'').trim();
+    const natureWords=fieldWords(row,.365,.410,0,1);
+    const nature=normalized(join(natureWords)).replace(/[^\p{L}\s]/gu,'').trim();
     const priceWords=fieldWords(row,.528,.596,0,1);
     const price=parseMoney(join(priceWords));
     const priceReliable=priceWords.length>0 && priceWords.every(w=>w.conf>=70);
@@ -109,14 +111,17 @@ function parseScreen(data,width,height,options={}) {
       const x=.410+j*.0203;
       const col=fieldWords(row,x,x+.0203,0,1);
       const str=join(col).replace(/[^\d]/g,'');
-      const v=/^\d{1,2}$/.test(str)?Number(str):null;
+      const v=/^\d{1,2}$/.test(str)&&col.every(w=>w.conf>=65)?Number(str):null;
       ivs.push(v);
     }
     const genderRaw=join(fieldWords(row,.209,.256,0,1));
     const sex=/♀/.test(genderRaw)?'F':/♂/.test(genderRaw)?'M':'?';
     const age=join(fieldWords(row,.596,.668,0,1));
     const entry={species,level,nature,sex,price,ivs,age,rank:i+1};
-    if(validListing(entry))rows.push(entry);
+    // Do not contaminate prices with low-confidence OCR readings.
+    const nameReliable=nameWords.some(w=>w.conf>=70 && /\p{L}{3,}/u.test(w.text));
+    const natureReliable=natureWords.length>0 && natureWords.every(w=>w.conf>=65);
+    if(validListing(entry)&&priceReliable&&nameReliable&&natureReliable)rows.push(entry);
     else if(species||price||ivs.some(v=>v!==null))
       partialRows.push({rank:i+1,species,level,nature,sex,price,ivs,priceReliable,
         missing:!species?'ESPECIE':!Number.isInteger(level)?'NIVEL':!nature?'NATURALEZA':!price?'PRECIO':'IV_INCOMPLETOS'});

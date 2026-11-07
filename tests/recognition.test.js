@@ -71,3 +71,16 @@ test('reads ten GTL rows with coordinates sampled from the real game layout',()=
   assert.equal(actual.rows[2].price,749999);
   assert.equal(actual.rows[9].rank,10);
 });
+
+test('unreliable prices are quarantined as partial reads, not inserted as reliable listings',()=>{
+  function w(text,x,y,confidence=95){
+    return {text:String(text),confidence,bbox:{x0:x*1680-6,x1:x*1680+6,y0:y*871-5,y1:y*871+5}};
+  }
+  const words=[w('Nv.',.270,.326),w('52',.282,.326),w('Ditto',.298,.326),
+    w('osada',.385,.326),...[4,14,4,25,23,17].map((iv,i)=>w(iv,.420+i*.0205,.326)),
+    w('$12.000',.557,.326,48),w('Comprar',.76,.326)];
+  const result=parseScreen({words},1680,871,{gtlConfirmed:true});
+  assert.equal(result.rows.length,0);
+  assert.equal(result.partialRows.length,1);
+  assert.equal(result.partialRows[0].priceReliable,false);
+});
