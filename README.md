@@ -1,10 +1,8 @@
-# PokéRadar GTL — Fase 1 (v0.2.0)
+# PokéRadar GTL — Fase 1 (v0.2.1)
 
-Aplicación Electron para Windows 11 con **interfaz clara**, botones **Play / Stop**, indicador flotante pasivo y base SQLite local.
+Aplicación de escritorio Electron para Windows 11. **Play** inicia una sesión de lectura visual del GTL, sin formularios de cuota ni posiciones X/Y, y muestra un pequeño radar flotante. No realiza compras ni controla el cliente del juego.
 
-## Iniciar
-
-Requiere Node.js 24+ y Git. En PowerShell:
+## Actualizar en D:
 
 ```powershell
 cd D:\Pokemon
@@ -13,7 +11,7 @@ npm install
 npm start
 ```
 
-Para verificar el proyecto:
+Requisitos: Node.js 24+ y npm. Para comprobar cambios:
 
 ```powershell
 npm run check
@@ -22,28 +20,35 @@ npm test
 
 ## Uso
 
-1. En **Ajustes**, confirma que verificaste las condiciones aplicables al juego y configura una cuota conservadora de publicación GTL (en Pokéyenes).
-2. Pulsa **Play**. La ventana principal se minimiza y aparece una pestaña pequeña y flotante de **Radar**. Sin Play no se captura ni se analiza el juego.
-3. Fuera del GTL, la aplicación revisa únicamente la zona superior del mercado con menor frecuencia. Cuando detecta el GTL, intenta leer sus diez filas.
-4. En el GTL, solo aparecen etiquetas **COMPRAR / NO COMPRAR** junto a los anuncios para los que el sistema tenga información suficiente. Si falta evidencia, no muestra recomendación.
-5. Al salir del GTL, la pestaña se reduce de nuevo. Para detener todo, restaura PokéRadar desde la barra de tareas y pulsa **Stop**.
-6. **Buscar** propone búsquedas para enriquecer los datos; **Historial** muestra evaluaciones y operaciones confirmadas; **Ajustes** concentra las configuraciones.
+1. Pulsa **Play**. La ventana principal se minimiza y el indicador compacto aparece. Ya no se exige marcar una casilla ni escribir un importe.
+2. Al abrir GTL → Anuncios de Pokémon, la app intenta reconocer las 10 filas visibles. Se alinea automáticamente con los botones Comprar observados; si no hay suficientes referencias, utiliza una posición relativa al juego.
+3. Si existen suficientes precios comparables, saldo reciente y margen neto estimado positivo, puede mostrar **COMPRAR** o **NO COMPRAR**. Con datos incompletos, no recomienda.
+4. Al salir del GTL se compacta. Para detenerla, restaura PokéRadar desde la barra de tareas y pulsa **Stop**.
+5. En **Buscar** verás sugerencias para poblar el historial. En **Historial** puedes consultar registros y confirmar operaciones.
 
-## Arquitectura
+## Cuota estimada automáticamente: advertencia importante
 
-- `src/main.js`: sesión Play / Stop, captura adaptativa y ventanas.
-- `src/scan-policy.js`: intervalos y regiones pequeñas de lectura.
-- `src/recognition.js`: OCR local con Tesseract.js.
-- `src/window-locator.js`: coordenadas del cliente en Windows.
-- `src/database.js`: SQLite, WAL, integridad y respaldos.
-- `src/market.js`: comparables, margen neto, reserva de liquidez del 30 %.
-- `src/ui/`: interfaz clara e indicador flotante transparente.
-- `tests/`: pruebas automáticas.
+La documentación de soporte confirma que la cuota de publicación depende del precio y tiene un **máximo de 25.000 ¥**, pero no publica una fórmula actual completa:
+https://support.pokemmo.com/knowledgebase/article/the-gtl-system
 
-## Limitaciones y seguridad
+Una guía histórica de la comunidad menciona 5 %, mínimo de 1.000 ¥ para Pokémon y máximo de 25.000 ¥:
+https://forums.pokemmo.com/index.php?/topic/135773-money-making-methods-comparison/
 
-Esta versión **no se ha probado todavía en tu Windows 11 con PokéMMO abierto**. El tiempo inferior a un segundo y el objetivo de que el juego no pierda fluidez requieren medición y calibración reales. El reconocimiento OCR puede tardar más de un segundo, sobre todo si el equipo es limitado.
+Por precaución, la versión 0.2.1 **estima una cuota de 5 % del precio de reventa MÁS 1.000 ¥, limitada a 25.000 ¥**. Esto **no es una tarifa oficial confirmada**, y puede sobrestimar o subestimar el importe real en circunstancias distintas. Se eliminaron los campos manuales, no la incertidumbre del mercado. Hay que contrastar periódicamente la estimación con la cuota que muestra Crear Anuncio antes de invertir dinero. El historial registrado no garantiza ventas rápidas.
 
-La aplicación no pulsa teclas, no hace clic, no compra, no inyecta código ni intercepta tráfico. La ventana flotante es pasiva y deja pasar clics. Verifica las condiciones de PokéMMO: su independencia de la franquicia oficial no significa que carezca de reglas aplicables.
+## Fiabilidad y límites
 
-Una publicación observada o desaparecida **no prueba una venta**. La recomendación exige referencias comparables, cuota configurada y saldo visible. No está garantizada la liquidez ni la rentabilidad. Las imágenes se procesan localmente; el historial se guarda en la base SQLite, no en GitHub.
+La reserva de saldo es del **30 %**. SQLite conserva anuncios e historial con WAL y comprobación de integridad; las capturas no se almacenan. Las recomendaciones anteriores se ocultan al cambiar la pantalla.
+
+**Todavía no se ha probado esta actualización con PokéMMO ejecutándose en tu Windows 11.** El reconocimiento por OCR puede superar el objetivo de un segundo y el impacto sobre FPS requiere medición real. El posicionamiento automático está basado en reconocimiento de botones y un respaldo proporcional, por lo que puede necesitar calibración si cambias la interfaz.
+
+La ventana flotante no recibe clics. La app no hace clic, no automatiza compras, no lee memoria del juego ni intercepta tráfico. El hecho de que PokéMMO no sea oficial de Nintendo no elimina sus reglas de uso; comprueba las condiciones aplicables.
+
+## Organización
+
+- `src/main.js`: sesión Play/Stop, ventana flotante y captura adaptativa.
+- `src/recognition.js`: reconocimiento GTL, información de anuncios y posición de botones.
+- `src/market.js`: evaluación económica y cuota conservadora automática.
+- `src/database.js`: SQLite y respaldos.
+- `src/ui/`: interfaz clara, mínima y sin configuraciones manuales.
+- `tests/`: pruebas automatizadas.

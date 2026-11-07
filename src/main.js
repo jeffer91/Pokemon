@@ -65,16 +65,18 @@ async function showCompact(){
   const y=Math.max(work.y,Math.min(work.y+work.height-height,game.y+10));
   place({x,y,width,height});
 }
-async function showResults(rows,version){
+async function showResults(rows,version,layout=null){
   if(!sessionActive||sessionVersion!==version||!overlay||overlay.isDestroyed())return;
   if(!rows.some(r=>r.decision!=='SILENCIO'))return showCompact();
   const game=await locateWindow();
   if(!sessionActive||sessionVersion!==version)return;
   if(!game)return showCompact();
-  const conf=storage.settings(),scale=Math.max(.6,Math.min(1.6,conf.overlayScale));
-  const width=Math.round(156*scale),step=Math.max(25,Math.round(game.height*.0455));
-  const x=Math.round(game.x+game.width*.810+conf.overlayX);
-  const y=Math.round(game.y+game.height*.311+conf.overlayY);
+  const scale=1; // Automatic positioning; previous manually stored offsets are ignored.
+  const width=Math.round(156*scale);
+  const auto=layout && Number.isFinite(layout.firstRowTopNorm) ? layout : null;
+  const step=Math.max(25,Math.round(game.height*(auto?.stepNorm||.0455)));
+  const x=Math.round(game.x+game.width*(auto?.overlayXNorm||.810));
+  const y=Math.round(game.y+game.height*(auto?.firstRowTopNorm||.311));
   const work=screen.getDisplayMatching(game).workArea;
   const bounds={
     x:Math.max(work.x,Math.min(work.x+work.width-width,x)),
@@ -151,7 +153,10 @@ async function tick(){
     const res=await recognizer.analyze(source.thumbnail.toPNG(),size.width,size.height);
     if(!sessionActive||version!==sessionVersion)return;
     if(!res.gtl||res.advanced){
-      mode='idle';headerHash='';tableHash='';
+      mode='idle';tableHash='';
+      // Remember this non-list screen so an open filter panel does not trigger
+      // repeated full OCR passes while it remains unchanged.
+      headerHash=imageHash(cropped(source.thumbnail,size.width,size.height,'header'));
       setStatus({state:res.advanced?'investigando':'esperando',
         message:res.advanced?'Búsqueda avanzada.':'Radar listo. Entra al GTL.',recognized:0,
         latency:Math.round(performance.now()-start)});
@@ -160,15 +165,15 @@ async function tick(){
     if(Number.isSafeInteger(res.balance))storage.recordBalance(res.balance);
     const context=res.context+'|'+res.sort;
     const saved=storage.recordListings(res.rows,context,1);
-    const balance=storage.latestBalance(),conf=storage.settings();
+    const balance=storage.latestBalance();
     const decisions=res.rows.map(row=>{
       const p={...row,fingerprint:identity(row)};
-      const ev=evaluate(p,storage.candidates(row.species),{balance,listingFee:conf.listingFee});
+      const ev=evaluate(p,storage.candidates(row.species),{balance});
       if(saved)storage.recordRecommendation(p,ev,context);
       return {rank:row.rank,decision:ev.decision,netEstimate:ev.netEstimate};
     });
     if(!sessionActive||version!==sessionVersion)return;
-    await showResults(decisions,version);
+    await showResults(decisions,version,res.layout);
     setStatus({state:'activo',message:res.rows.length+' anuncios leídos.',
       recognized:res.rows.length,latency:Math.round(performance.now()-start)});
     if(saved)publishData();
@@ -191,7 +196,6 @@ function stopSession(){
 }
 async function startSession(){
   if(sessionActive)return {ok:true,running:true};
-  if(!storage.settings().consentConfirmed)throw Error('Activa la lectura visual en Ajustes antes de pulsar Play.');
   sessionActive=true;sessionVersion++;mode='idle';headerHash='';tableHash='';
   setStatus({state:'esperando',message:'Preparando radar.',recognized:0,latency:null});
   // Passive overlay: never intercepts game clicks or keyboard focus.

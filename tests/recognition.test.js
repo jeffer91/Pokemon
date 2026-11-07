@@ -20,3 +20,14 @@ test('no crea recomendaciones a partir de filas incompletas',()=>{
     word('Nv.',.265,.316),word('70',.285,.316),word('Gardevoir',.327,.316),word('alegre',.38,.316),word('31',.419,.316),word('$49.999',.55,.316)];
   assert.equal(parseScreen({words:w},1680,900).rows.length,0);
 });
+
+test('posiciona el radar con filas de Comprar reconocidas',()=>{
+  const {overlayLayout}=require('../src/recognition');
+  const words=Array.from({length:10},(_,i)=>({text:'Comprar',x:.749,y:.325+i*.0455,conf:95}));
+  const layout=overlayLayout(words);
+  assert.ok(layout);
+  assert.ok(layout.overlayXNorm>=.80 && layout.overlayXNorm<=.85);
+  assert.ok(Math.abs(layout.firstRowTopNorm-.30225)<.002);
+  assert.ok(Math.abs(layout.stepNorm-.0455)<.001);
+  assert.equal(overlayLayout(words.slice(0,2)),null);
+});

@@ -10,9 +10,14 @@ test('valida filas completas y no inventa IVs',()=>{
   assert.equal(validListing(pokemon(100,{ivs:[31,null,3,5,4,2]})),false);
   assert.equal(validListing(pokemon(-3)),false);
 });
-test('requiere comisión conocida y saldo confirmado',()=>{
-  assert.equal(evaluate(pokemon(),[],{balance:100000}).reason,'COMISION_SIN_CONFIGURAR');
-  assert.equal(evaluate(pokemon(),[],{listingFee:1000}).reason,'SALDO_NO_CONFIRMADO');
+test('estima cuota GTL automáticamente y requiere saldo actual',()=>{
+  const {saleFee}=require('../src/market');
+  assert.equal(saleFee(10000),1500);
+  assert.equal(saleFee(20000),2000);
+  assert.equal(saleFee(1_000_000),25000);
+  assert.equal(saleFee(30000,{listingFee:1000}),1000);
+  assert.equal(evaluate(pokemon(),[],{}).reason,'SALDO_NO_CONFIRMADO');
+  assert.equal(evaluate(pokemon(),[],{balance:100000}).reason,'MUESTRA_INSUFICIENTE');
 });
 test('respeta la reserva del treinta por ciento',()=>{
   assert.equal(availableToSpend(100000),70000);
@@ -48,4 +53,13 @@ test('solo compara naturaleza, sexo, nivel 1 e IVs relevantes equivalentes',()=>
 test('mediana robusta y búsquedas guiadas',()=>{
   assert.equal(median([10,1000000,12,11,9]),11);
   assert.ok(researchSuggestions({total:0}).length>2);
+});
+
+test('carga automática permite evaluar sin pedir cuota',()=>{
+  const values=[28000,29000,30000,29000,31000,30000,28000,30000,32000,29000,28000,30000,30000,31000,29000];
+  const result=evaluate(pokemon(21000,{fingerprint:'target'}),samples(values),{balance:100000,now});
+  assert.equal(result.decision,'COMPRAR');
+  assert.equal(result.feeEstimate,2500);
+  assert.equal(result.netEstimate,6500);
+  assert.equal(result.feeModel,'conservative-estimate');
 });

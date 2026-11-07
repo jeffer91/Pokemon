@@ -24,6 +24,26 @@ function cleanWords(data,width,height){
 }
 function fieldWords(words,xMin,xMax,yMin,yMax) {return words.filter(w=>w.x>=xMin&&w.x<xMax&&w.y>=yMin&&w.y<yMax).sort((a,b)=>a.x-b.x);}
 function join(words){return words.map(w=>w.text).join(' ').trim();}
+function overlayLayout(words) {
+  // Anchor to OCR-observed BUY buttons when enough rows are visible. This keeps
+  // the labels aligned when the GTL UI is scaled or repositioned.
+  const buttons=words.filter(w=>normalized(w.text)==='comprar' && w.x>.69 && w.x<.83 &&
+    w.y>.29 && w.y<.80).sort((a,b)=>a.y-b.y);
+  if(buttons.length<6)return null;
+  const gaps=[];
+  for(let i=1;i<buttons.length;i++){
+    const d=buttons[i].y-buttons[i-1].y;
+    if(d>.035 && d<.060)gaps.push(d);
+  }
+  if(gaps.length<4)return null;
+  gaps.sort((a,b)=>a-b);
+  const step=gaps[Math.floor(gaps.length/2)];
+  const first=buttons[0];
+  if(first.y<.300 || first.y>.355)return null;
+  const right=Math.max(...buttons.map(b=>b.x))+.060;
+  return {firstRowTopNorm:Math.max(.27,first.y-step/2),
+    stepNorm:step,overlayXNorm:Math.max(.795,Math.min(.88,right))};
+}
 function parseScreen(data,width,height) {
   const words=cleanWords(data,width,height);
   const all=normalized(join(words));
@@ -67,7 +87,7 @@ function parseScreen(data,width,height) {
     const entry={species,level,nature,sex,price,ivs,age,rank:i+1};
     if(validListing(entry))rows.push(entry);
   }
-  return {gtl,advanced,rows,context,sort:isOld?'oldest':isNew?'newest':'unknown',balance};
+  return {gtl,advanced,rows,layout:overlayLayout(words),context,sort:isOld?'oldest':isNew?'newest':'unknown',balance};
 }
 async function createRecognizer(){
   const {createWorker, PSM}=require('tesseract.js');
@@ -85,4 +105,4 @@ async function createRecognizer(){
     return parseScreen(result.data,width,height);
   },close:()=>worker.terminate()};
 }
-module.exports={parseScreen,parseMoney,flattenWords,cleanWords,createRecognizer,normalized};
+module.exports={parseScreen,parseMoney,flattenWords,cleanWords,createRecognizer,normalized,overlayLayout};

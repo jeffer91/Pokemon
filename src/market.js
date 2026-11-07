@@ -28,11 +28,14 @@ function comparable(a, b) {
   return signature(a) === signature(b) && a.nature.toLowerCase() === b.nature.toLowerCase() &&
     (a.level === 1) === (b.level === 1) && (a.sex || '?') === (b.sex || '?');
 }
-function saleFee(price, settings) {
+function saleFee(price, settings = {}) {
   if (!validPrice(price)) return null;
-  // GTL fee is variable. The user-specified fee is a conservative estimate until verified.
+  // Automatic CONSERVATIVE estimate: historical 5% + 1,000 reserve, capped at
+  // 25,000 (the cap is documented by PokeMMO support). This is NOT a confirmed
+  // current official formula. A validated override is possible for unit tests.
   const fee = settings?.listingFee;
-  return Number.isSafeInteger(fee) && fee >= 0 && fee <= 25_000 ? fee : null;
+  if (Number.isSafeInteger(fee) && fee >= 0 && fee <= 25_000) return fee;
+  return Math.min(25_000, 1_000 + Math.ceil(price * .05));
 }
 function availableToSpend(balance, reserved = 0) {
   if (!Number.isSafeInteger(balance) || balance < 0 || !Number.isSafeInteger(reserved) || reserved < 0) return null;
@@ -41,8 +44,6 @@ function availableToSpend(balance, reserved = 0) {
 function evaluate(listing, samples = [], { balance = null, listingFee = null, pendingSpend = 0, now = Date.now() } = {}) {
   const unknown = (reason, extra = {}) => ({decision: 'SILENCIO', reason, confidence: 0, ...extra});
   if (!validListing(listing)) return unknown('LECTURA_INCOMPLETA');
-  const fee = saleFee(listing.price, {listingFee});
-  if (fee === null) return unknown('COMISION_SIN_CONFIGURAR');
   const spendable = availableToSpend(balance, pendingSpend);
   if (spendable === null) return unknown('SALDO_NO_CONFIRMADO');
   if (listing.price > spendable) return {decision:'NO_COMPRAR', reason:'RESERVA_30_POR_CIENTO', confidence:1, spendable};
@@ -57,12 +58,15 @@ function evaluate(listing, samples = [], { balance = null, listingFee = null, pe
   const peers = [...uniques.values()].filter(p => p.price !== listing.price || p.fingerprint !== listing.fingerprint);
   if (peers.length < MIN_COMPARABLES) return unknown('MUESTRA_INSUFICIENTE',{comparables:peers.length});
   const baseline = median(peers.map(p => p.price));
+  // Listing costs depend on the anticipated resale price, NOT the buying price.
+  const fee = saleFee(baseline, {listingFee});
   const discount = percentDiscount(listing.price, baseline);
   const net = baseline - listing.price - fee;
   const fresh = peers.filter(p => p.lastSeen >= now - FAST_WINDOW_HOURS * 3_600_000).length;
   const evidence = Math.min(1, peers.length / 15) * 0.6 + Math.min(1, fresh / 8) * 0.4;
   const result = {decision:'NO_COMPRAR', reason:'MARGEN_INSUFICIENTE', confidence:+evidence.toFixed(2),
-    comparables:peers.length, priceReference:baseline, netEstimate:net, discount:+discount.toFixed(3), spendable};
+    comparables:peers.length, priceReference:baseline, netEstimate:net, feeEstimate:fee, feeModel:listingFee===null?'conservative-estimate':'validated-override',
+    discount:+discount.toFixed(3), spendable};
   // Do NOT claim liquidity based on disappearing listings alone. Confidence here is price confidence.
   // A positive signal does not assert that a quick sale is guaranteed.
   if (net >= 1000 && discount >= 0.12 && evidence >= 0.58 && fresh >= 3) {

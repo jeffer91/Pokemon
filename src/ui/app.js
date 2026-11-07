@@ -32,9 +32,7 @@ function renderData(data){
   $('total').textContent=s.total||0;$('observations').textContent=s.observations||0;
   $('decisions').textContent=(s.decisions||0)+' decisiones';
   $('balance').textContent=currency(data.balance);
-  $('fee').value=settings.listingFee??'';
-  $('offset-x').value=settings.overlayX??0;$('offset-y').value=settings.overlayY??0;
-  $('consent').checked=!!settings.consentConfirmed;
+
   const listings=$('listings');listings.replaceChildren();
   for(const row of (data.recent||[]).slice(0,8)){
     const tr=document.createElement('tr');
@@ -67,16 +65,6 @@ $('play').addEventListener('click',async()=>{
 });
 $('stop').addEventListener('click',async()=>{
   notice('');try{await window.radar.stop();}catch(e){notice(e.message);}
-});
-$('save').addEventListener('click',async()=>{
-  const raw=$('fee').value.trim();
-  const changes={
-    listingFee:raw===''?null:Number(raw),
-    overlayX:Number($('offset-x').value),overlayY:Number($('offset-y').value),
-    consentConfirmed:$('consent').checked
-  };
-  try{const settings=await window.radar.settings(changes);current.settings=settings;notice('Ajustes guardados.');}
-  catch(e){notice(e.message);}
 });
 $('trade-form').addEventListener('submit',async event=>{
   event.preventDefault();
