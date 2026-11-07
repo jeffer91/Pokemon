@@ -79,3 +79,24 @@ El OCR sigue necesitando calibración y pruebas en tu Windows 11. El objetivo de
 - La localización de la ventana espera una búsqueda ya iniciada en vez de devolver un resultado nulo prematuro. No se automatizan clics ni compras.
 - Los dos métodos de captura solo funcionan después de Play y el recorte de pantalla se mantiene en memoria. **Si necesitas comprobar si funciona realmente en tu equipo, abre Diagnóstico y pulsa Copiar diagnóstico.**
 - **Limitación:** no se ha ejecutado el cliente real de PokéMMO en el entorno de desarrollo. La compatibilidad y los FPS deben verificarse en tu Windows 11; el motor OCR aún puede requerir ajustes con datos reales.
+
+## v0.4.0 — Comparación real de cinco motores de captura
+
+En la pestaña **Diagnóstico**, pulsa **Probar 5 motores** con PokéMMO abierto, preferiblemente mostrando el GTL. PokéRadar minimiza su ventana temporalmente para que los motores de pantalla puedan ver el juego, prueba cada uno, restaura el panel y presenta:
+- Código de resultado y duración de cada motor.
+- Imagen captada o error exacto; resolución de la imagen.
+- Señal visual del GTL y porcentaje de coincidencia del panel.
+- Motor seleccionado automáticamente entre los que hayan obtenido imagen válida.
+
+Métodos implementados dentro de los archivos existentes:
+1. Electron Window: fuente de ventana por nombre.
+2. Electron Screen + Win32: monitor recortado con coordenadas de ventana obtenidas de Windows.
+3. Electron Screen Visual: búsqueda del panel GTL directamente en monitores, sin depender del nombre de ventana.
+4. GDI CopyFromScreen: alternativa nativa de Windows, con proceso PowerShell temporal para captura.
+5. Win32 PrintWindow: captura de ventana mediante Win32, que puede fallar con juegos acelerados.
+
+Los motores 4 y 5 son más costosos y solo se utilizan continuamente si una prueba los selecciona. El motor preferido se guarda en SQLite y se reutiliza en sesiones posteriores.
+
+**Windows Graphics Capture y DXGI Desktop Duplication no están implementados como backends nativos** porque requieren adaptadores compilados adicionales: no se presentan como pruebas exitosas ni se sustituyen silenciosamente. La versión 0.4.0 integra cinco estrategias funcionalmente distintas compatibles con los componentes ya existentes, sin añadir archivos al repositorio.
+
+Cuando falla la captura, sigue apareciendo el código exacto. Ningún motor puede garantizar una imagen de un juego tapado por otra aplicación: los resultados se comprueban en tu Windows 11. La aplicación no automatiza clics ni compras. El informe copiado no incluye píxeles ni nombres de otras ventanas.

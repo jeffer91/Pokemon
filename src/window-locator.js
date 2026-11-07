@@ -50,4 +50,96 @@ async function locateWindow(){
   }catch{last=null;return null;}})();
   try{return await inFlight;}finally{inFlight=null;}
 }
-module.exports={locateWindow};
+module.exports={locateWindow,captureNative};
+
+
+// Independent Windows GDI backends. They do not call Electron desktopCapturer.
+// Used in manual engine tests or if faster capture backends fail.
+const nativeScript=String.raw`
+$ErrorActionPreference='Stop'
+Add-Type -AssemblyName System.Drawing
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+public static class RadarNative {
+  [StructLayout(LayoutKind.Sequential)] public struct RECT {public int Left,Top,Right,Bottom;}
+  [StructLayout(LayoutKind.Sequential)] public struct POINT {public int X,Y;}
+  public delegate bool Callback(IntPtr hwnd,IntPtr param);
+  [DllImport("user32.dll")] public static extern bool EnumWindows(Callback cb,IntPtr param);
+  [DllImport("user32.dll",CharSet=CharSet.Unicode)] public static extern int GetWindowText(IntPtr h,StringBuilder b,int n);
+  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
+  [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr h,out RECT r);
+  [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr h,ref POINT p);
+  [DllImport("user32.dll",SetLastError=true)] public static extern bool PrintWindow(IntPtr h,IntPtr dc,uint flags);
+  public static IntPtr Find(out RECT rect,out POINT pt) {
+    IntPtr found=IntPtr.Zero;
+    RECT temp=new RECT(); POINT origin=new POINT();
+    EnumWindows((h,p)=>{
+      if(!IsWindowVisible(h))return true;
+      var b=new StringBuilder(256);GetWindowText(h,b,b.Capacity);
+      if(b.ToString().IndexOf("PokeMMO",StringComparison.OrdinalIgnoreCase)<0)return true;
+      RECT r;POINT v=new POINT{X=0,Y=0};
+      if(!GetClientRect(h,out r)||!ClientToScreen(h,ref v))return true;
+      if(r.Right-r.Left<400||r.Bottom-r.Top<300)return true;
+      temp=r;origin=v;found=h;return false;
+    },IntPtr.Zero);
+    rect=temp;pt=origin;return found;
+  }
+}
+'@
+try {
+  $r=[RadarNative+RECT]::new()
+  $pt=[RadarNative+POINT]::new()
+  $hwnd=[RadarNative]::Find([ref]$r,[ref]$pt)
+  if($hwnd -eq [IntPtr]::Zero){Write-Output 'ERR|NATIVE-NOT-FOUND|PokeMMO no localizado';exit 0}
+  $w=$r.Right-$r.Left;$h=$r.Bottom-$r.Top
+  $bmp=[System.Drawing.Bitmap]::new($w,$h)
+  $g=[System.Drawing.Graphics]::FromImage($bmp)
+  try {
+    if('MODE' -eq 'copy'){
+      $g.CopyFromScreen($pt.X,$pt.Y,0,0,([System.Drawing.Size]::new($w,$h)))
+    } else {
+      $dc=$g.GetHdc()
+      try{$ok=[RadarNative]::PrintWindow($hwnd,$dc,3)}finally{$g.ReleaseHdc($dc)}
+      if(!$ok){Write-Output 'ERR|PRINT-UNSUPPORTED|El juego no permite PrintWindow';exit 0}
+    }
+    $ms=New-Object System.IO.MemoryStream
+    try{
+      $bmp.Save($ms,[System.Drawing.Imaging.ImageFormat]::Png)
+      Write-Output ('OK|'+$pt.X+','+$pt.Y+','+$w+','+$h+'|'+[Convert]::ToBase64String($ms.ToArray()))
+    }finally{$ms.Dispose()}
+  }finally{$g.Dispose();$bmp.Dispose()}
+}catch{
+  Write-Output ('ERR|NATIVE-FAIL|'+($_.Exception.Message -replace '\|','/'))
+}
+`;
+async function captureNative(mode,nativeImage){
+  if(process.platform!=='win32')return {code:'NATIVE-UNSUPPORTED',detail:'Solo Windows 11'};
+  if(!['copy','print'].includes(mode))throw Error('Modo nativo desconocido');
+  const command=nativeScript.replace("'MODE'",mode==='copy'?"'copy'":"'print'");
+  const encoded=Buffer.from(command,'utf16le').toString('base64');
+  let stdout;
+  try{
+    ({stdout}=await execFileAsync('powershell.exe',['-NoLogo','-NoProfile','-NonInteractive',
+      '-EncodedCommand',encoded],{timeout:9000,maxBuffer:20*1024*1024,windowsHide:true}));
+  }catch(error){return {code:'NATIVE-EXEC',detail:String(error.message||error).slice(0,150)};}
+  const line=stdout.trim().split(/\r?\n/).find(line=>line.startsWith('OK|')||line.startsWith('ERR|'));
+  if(!line)return {code:'NATIVE-NO-OUTPUT',detail:'Windows no entregó diagnóstico'};
+  if(line.startsWith('ERR|')){
+    const parts=line.split('|');
+    return {code:parts[1]||'NATIVE-ERROR',detail:(parts[2]||'Error de Windows').slice(0,160)};
+  }
+  const parts=line.split('|');
+  const coords=parts[1].split(',').map(Number);
+  if(coords.length!==4||!coords.every(Number.isFinite)||!nativeImage?.createFromBuffer)
+    return {code:'NATIVE-DECODE',detail:'Respuesta no válida'};
+  try{
+    const data=Buffer.from(parts[2]||'','base64');
+    const image=nativeImage.createFromBuffer(data);
+    if(image.isEmpty())return {code:'NATIVE-EMPTY',detail:'Imagen nativa vacía'};
+    return {image,rect:{x:coords[0],y:coords[1],width:coords[2],height:coords[3]},
+      code:mode==='copy'?'GDI-OK':'PRINT-OK',
+      detail:mode==='copy'?'Captura de pantalla GDI':'Captura de ventana PrintWindow'};
+  }catch(e){return {code:'NATIVE-DECODE',detail:String(e.message||e).slice(0,140)};}
+}

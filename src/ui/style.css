@@ -37,3 +37,9 @@ input,select{border:1px solid #dbe3eb;background:#fff;color:#25374c;border-radiu
 .diag-copy{margin-top:12px}
 #notice{color:#a55218;font-size:12px;margin-top:8px;min-height:15px}
 @media(max-width:700px){main{padding:13px}.top{padding:13px}.metrics article{padding:12px}.metrics strong{font-size:19px}.trade{grid-template-columns:1fr 1fr}.trade button{grid-column:span 2}.playbar{flex-wrap:wrap}.actions{width:100%}.actions button{flex:1}}
+
+.engine-list{display:grid;gap:2px}
+.engine-row{display:flex;align-items:center;gap:11px;padding:11px 2px;border-bottom:1px solid #edf1f5}
+.engine-row .diag-info small{line-height:1.4;overflow-wrap:anywhere}
+.engine-row .diag-code{font-weight:700}
+#engine-feedback{margin:9px 0 0}

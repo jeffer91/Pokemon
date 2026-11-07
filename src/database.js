@@ -6,7 +6,7 @@ const crypto = require('node:crypto');
 const {validListing, researchSuggestions} = require('./market');
 
 const DEFAULT_SETTINGS = {listingFee:null, captureEnabled:false, reserveRatio:0.30,
-  overlayX:0, overlayY:0, overlayScale:1, consentConfirmed:false};
+  overlayX:0, overlayY:0, overlayScale:1, consentConfirmed:false, captureEngine:null};
 function identity(p) { return crypto.createHash('sha256').update(JSON.stringify([p.species.toLowerCase(),p.level,p.nature.toLowerCase(),p.sex||'?',p.price,...p.ivs])).digest('hex'); }
 function openDatabase(folder) {
   fs.mkdirSync(folder,{recursive:true});
@@ -75,6 +75,7 @@ function openDatabase(folder) {
     for(const [k,v] of Object.entries(changes)) {
       if(!allowed.includes(k)) throw Error('Parámetro no permitido: '+k);
       if(k==='listingFee' && v !== null && (!Number.isSafeInteger(v)||v<0||v>25000)) throw Error('Cuota GTL fuera de rango');
+      if(k==='captureEngine' && v!==null && !['electron-window','electron-win32','electron-visual','win-gdi','win-print'].includes(v)) throw Error('Motor de captura inválido');
       if(['overlayX','overlayY'].includes(k) && (!Number.isFinite(v)||Math.abs(v)>1000)) throw Error('Posición incorrecta');
       if(k==='overlayScale' && (!Number.isFinite(v)||v<0.6||v>1.6)) throw Error('Escala incorrecta');
       if(['captureEnabled','consentConfirmed'].includes(k) && typeof v !== 'boolean') throw Error('Valor booleano requerido');

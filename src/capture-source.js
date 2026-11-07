@@ -1,98 +1,187 @@
 'use strict';
-// Tested separately from Electron via injected dependencies.
-// Never persists a frame, and only crops the verified PokeMMO client rectangle.
+// Independent capture engines. All images remain in memory; diagnostics only store metadata.
 const TITLE=/poke[\s_-]*mmo/i;
-const validRect=r=>r&&[r.x,r.y,r.width,r.height].every(Number.isFinite)&&r.width>=400&&r.height>=300;
+const ENGINE_LABELS=Object.freeze({
+  'electron-window':'Electron · Ventana',
+  'electron-win32':'Electron · Pantalla + Win32',
+  'electron-visual':'Electron · Pantalla visual',
+  'win-gdi':'Windows · GDI pantalla',
+  'win-print':'Windows · PrintWindow'
+});
+const validRect=r=>!!(r&&[r.x,r.y,r.width,r.height].every(Number.isFinite)&&r.width>=400&&r.height>=300);
 function cropFromDisplay(rect,bounds,size){
-  if(!validRect(rect)||!bounds||!size||size.width<=0||size.height<=0) return null;
+  if(!validRect(rect)||!bounds||!size||size.width<=0||size.height<=0||bounds.width<=0||bounds.height<=0)return null;
   const fx=size.width/bounds.width,fy=size.height/bounds.height;
-  if(!Number.isFinite(fx)||!Number.isFinite(fy)||fx<=0||fy<=0)return null;
   const x=Math.max(0,Math.round((rect.x-bounds.x)*fx));
   const y=Math.max(0,Math.round((rect.y-bounds.y)*fy));
   const right=Math.min(size.width,Math.round((rect.x+rect.width-bounds.x)*fx));
   const bottom=Math.min(size.height,Math.round((rect.y+rect.height-bounds.y)*fy));
   const w=right-x,h=bottom-y;
-  // Refuse an unrelated screen area: at least 80% of the expected client must fit.
-  if(w<400||h<300||w*h<rect.width*fx*rect.height*fy*.8)return null;
+  if(!Number.isFinite(fx)||!Number.isFinite(fy)||w<400||h<300||
+    w*h<rect.width*fx*rect.height*fy*.8)return null;
   return {x,y,width:w,height:h};
 }
-function createGameCapture({desktopCapturer,screen,locateWindow,inspectThumbnail,now=()=>Date.now()}){
-  let nextWindowProbe=0, lastDebug=null;
-  const safeHealth=image=>{
-    try {return !image?.isEmpty() && inspectThumbnail(image)?.valid===true;}
-    catch {return false;}
-  };
-  async function capture(active=false){
-    let windows=[],matching=[],windowError='',geometry=null;
-    const size=active?{width:1680,height:900}:{width:1280,height:720};
-    if(now()>=nextWindowProbe){
-      try {
-        windows=await desktopCapturer.getSources({types:['window'],thumbnailSize:size});
-        matching=windows.filter(s=>TITLE.test(s.name||''));
-        const valid=matching.find(s=>safeHealth(s.thumbnail));
-        if(valid){
-          nextWindowProbe=0;
-          lastDebug={mode:'window',matchCount:matching.length,windowCount:windows.length};
-          return {image:valid.thumbnail,via:'window',code:'CAP-WINDOW',detail:'Captura directa de PokéMMO',debug:lastDebug};
-        }
-        // The window capturer can enumerate the game with an empty/black thumbnail.
-        nextWindowProbe=now()+12000;
-      }catch(e){
-        windowError=String(e?.message||e).slice(0,90);
-        nextWindowProbe=now()+6000;
-      }
-    }
-    try {geometry=await locateWindow();}
-    catch(e){windowError=windowError||String(e?.message||e).slice(0,90);}
-    if(!validRect(geometry)){
-      const match=matching.length>0;
-      lastDebug={mode:'none',matchCount:matching.length,windowCount:windows.length};
-      return {image:null,via:null,code:match?'CAP-NO-GEOMETRY':'WIN-NOT-FOUND',
-        detail:match?'PokeMMO aparece en ventanas, pero Windows no obtuvo sus coordenadas':
-          'No hay imagen de ventana y Windows no pudo localizar PokeMMO'+(windowError?': '+windowError:''),
-        windowFound:match,debug:lastDebug};
-    }
-    let displays=[],display;
+function createGameCapture({desktopCapturer,screen,locateWindow,inspectThumbnail,
+    nativeCapture=null,now=()=>Date.now()}){
+  const order=Object.keys(ENGINE_LABELS);
+  const records=new Map(order.map(id=>[id,{id,name:ENGINE_LABELS[id],state:'pending',
+    code:'PENDIENTE',detail:'Sin probar',ms:null,frames:0,gtl:false,at:null}]));
+  let selected=null,lastRect=null,lastDebug=null,lastProbe=0,busy=null;
+  const cooldown=new Map();
+  function health(image){
     try{
-      displays=screen.getAllDisplays();
-      display=screen.getDisplayMatching(geometry);
-    }catch(e){
-      return {image:null,code:'CAP-DISPLAY',detail:'Error al identificar el monitor: '+String(e.message).slice(0,90),
-        windowFound:true};
-    }
-    if(!display||!display.bounds||display.bounds.width<=0||display.bounds.height<=0)
-      return {image:null,code:'CAP-DISPLAY',detail:'Monitor de PokéMMO no identificado',windowFound:true};
-    const resolution={width:Math.ceil(display.bounds.width*(display.scaleFactor||1)),
-      height:Math.ceil(display.bounds.height*(display.scaleFactor||1))};
-    let sources=[];
-    try{
-      sources=await desktopCapturer.getSources({types:['screen'],thumbnailSize:resolution});
-    }catch(e){
-      return {image:null,code:'CAP-SCREEN-ERROR',
-        detail:'Error al capturar el monitor: '+String(e.message).slice(0,90),windowFound:true};
-    }
-    const selected=sources.find(s=>String(s.display_id)===String(display.id))||
-      (sources.length===1? sources[0]:null);
-    if(!selected)
-      return {image:null,code:'CAP-SCREEN-SELECT',
-        detail:'No fue posible seleccionar el monitor correcto ('+sources.length+' disponibles)',windowFound:true};
-    if(!selected.thumbnail||selected.thumbnail.isEmpty())
-      return {image:null,code:'CAP-SCREEN-EMPTY',detail:'El monitor devolvió una imagen vacía',windowFound:true};
-    const imageSize=selected.thumbnail.getSize();
-    const crop=cropFromDisplay(geometry,display.bounds,imageSize);
-    if(!crop)return {image:null,code:'CAP-RECT',
-      detail:'Coordenadas de PokéMMO fuera del monitor o escala de pantalla incompatible',windowFound:true};
-    let image;
-    try{image=selected.thumbnail.crop(crop);}
-    catch(e){return {image:null,code:'CAP-CROP',detail:String(e.message).slice(0,90),windowFound:true};}
-    if(!safeHealth(image))return {image:null,code:'CAP-SCREEN-BLANK',
-      detail:'La zona de PokéMMO está tapada, negra o no contiene imagen útil',windowFound:true};
-    lastDebug={mode:'screen',windowCount:windows.length,matchCount:matching.length,
-      displayId:String(display.id),crop};
-    return {image,via:'screen',code:'CAP-SCREEN',
-      detail:'PokéMMO recortado del monitor ('+crop.width+'×'+crop.height+')',windowFound:true,
-      debug:lastDebug};
+      if(!image||image.isEmpty())return {valid:false,gtl:false,panelRatio:0,score:0};
+      return inspectThumbnail(image)||{valid:false,gtl:false};
+    }catch{return {valid:false,gtl:false,score:0};}
   }
-  return {capture,debug:()=>lastDebug};
+  const fail=(code,detail,meta={})=>({image:null,code,detail,...meta});
+  function update(id,result,elapsed){
+    const good=!!result.image && health(result.image).valid;
+    const h=good?health(result.image):{gtl:false,score:0,panelRatio:0};
+    const size=good?result.image.getSize():null;
+    const last=records.get(id);
+    const record={
+      id,name:last.name,state:good?'ok':result.unsupported?'unsupported':'error',
+      code:result.code||'CAP-UNKNOWN',detail:String(result.detail||'').slice(0,180),
+      ms:Math.round(elapsed),frames:good?1:0,gtl:!!h.gtl,score:h.score||0,
+      panelRatio:Math.round(100*(h.panelRatio||0)),size:size?size.width+'×'+size.height:null,
+      at:new Date().toISOString()
+    };
+    records.set(id,record);
+    if(good){lastRect=result.rect||lastRect;lastDebug={id,code:record.code,ms:record.ms,
+      gtl:record.gtl,score:record.score};}
+    return record;
+  }
+  async function run(id,active){
+    if(id==='electron-window'){
+      let sources;
+      try{sources=await desktopCapturer.getSources({types:['window'],
+        thumbnailSize:active?{width:1680,height:900}:{width:1280,height:720}});}
+      catch(e){return fail('EW-ERROR',String(e.message||e));}
+      const names=sources.filter(s=>TITLE.test(String(s.name||'')));
+      for(const source of names){
+        if(health(source.thumbnail).valid)
+          return {image:source.thumbnail,rect:null,via:id,code:'EW-OK',
+            detail:'Ventana PokeMMO captada ('+names.length+' coincidencias)'};
+      }
+      return fail(names.length?'EW-BLANK':'EW-NOT-FOUND',names.length?
+        'Se encontró la ventana, pero devolvió imagen vacía':
+        'Electron enumeró '+sources.length+' ventanas sin PokeMMO');
+    }
+    if(id==='electron-win32'){
+      let rect;
+      try{rect=await locateWindow();}catch(e){return fail('W32-ERROR',String(e.message||e));}
+      if(!validRect(rect))return fail('W32-NOT-FOUND','Win32 no localizó la ventana del juego');
+      let display,src;
+      try {
+        display=screen.getDisplayMatching(rect);
+        const d=display.bounds,scale=display.scaleFactor||1;
+        const candidates=await desktopCapturer.getSources({types:['screen'],thumbnailSize:{
+          width:Math.ceil(d.width*scale),height:Math.ceil(d.height*scale)}});
+        src=candidates.find(s=>String(s.display_id)===String(display.id))||
+          (candidates.length===1?candidates[0]:null);
+      }catch(e){return fail('W32-CAP-ERROR',String(e.message||e));}
+      if(!src||!src.thumbnail||src.thumbnail.isEmpty())return fail('W32-SCREEN-EMPTY',
+        'Monitor sin imagen o identificador no disponible');
+      const crop=cropFromDisplay(rect,display.bounds,src.thumbnail.getSize());
+      if(!crop)return fail('W32-CROP','Posición fuera del monitor o escala DPI incompatible');
+      const image=src.thumbnail.crop(crop);
+      if(!health(image).valid)return fail('W32-BLANK','La zona del juego está vacía o tapada');
+      return {image,rect,via:id,code:'W32-OK',detail:'Recorte de ventana confirmado'};
+    }
+    if(id==='electron-visual'){
+      let displays,sources;
+      try{
+        displays=screen.getAllDisplays();
+        sources=await desktopCapturer.getSources({types:['screen'],thumbnailSize:
+          {width:1920,height:1080}});
+      }catch(e){return fail('VIS-ERROR',String(e.message||e));}
+      let best=null;
+      for(const src of sources){
+        const h=health(src.thumbnail);
+        if(!h.valid||!h.gtl)continue;
+        const display=displays.find(d=>String(d.id)===String(src.display_id))||
+          (displays.length===1?displays[0]:null);
+        if(!display)continue;
+        if(!best||h.panelRatio>best.health.panelRatio)best={src,display,health:h};
+      }
+      if(!best)return fail('VIS-NO-GTL','Monitores captados, pero no se identificó el GTL visible');
+      return {image:best.src.thumbnail,rect:best.display.bounds,via:id,
+        code:'VIS-GTL',detail:'GTL encontrado visualmente en el monitor'};
+    }
+    if(id==='win-gdi'||id==='win-print'){
+      if(typeof nativeCapture!=='function')
+        return {...fail('NATIVE-UNAVAILABLE','Adaptador de Windows no disponible'),unsupported:true};
+      try{
+        const response=await nativeCapture(id==='win-gdi'?'copy':'print');
+        if(!response?.image||!health(response.image).valid)
+          return fail(response?.code||'GDI-EMPTY',response?.detail||'Captura nativa sin imagen útil');
+        return {...response,via:id};
+      }catch(e){return fail('NATIVE-ERROR',String(e.message||e).slice(0,180));}
+    }
+    return {...fail('CAP-UNKNOWN','Motor desconocido'),unsupported:true};
+  }
+  async function one(id,active=false){
+    const begin=now();
+    let result;
+    try{result=await run(id,active);}
+    catch(e){result=fail('CAP-EXCEPTION',String(e.message||e));}
+    const record=update(id,result,now()-begin);
+    return {result,record};
+  }
+  function winner(results){
+    // Prefer validated GTL captures, then window-specific capture.
+    const priority=id=>({'electron-window':5,'electron-win32':4,'electron-visual':3,
+      'win-gdi':2,'win-print':1}[id]||0);
+    return results.filter(r=>r.result.image).sort((a,b)=>
+      Number(b.record.gtl)-Number(a.record.gtl)||
+      priority(b.record.id)-priority(a.record.id)||
+      a.record.ms-b.record.ms)[0]||null;
+  }
+  async function probeAll(onProgress){
+    if(busy)return busy;
+    busy=(async()=>{
+      const results=[];
+      for(const id of order){
+        const attempt=await one(id,true);
+        results.push(attempt);
+        if(typeof onProgress==='function')await onProgress(attempt.record);
+      }
+      const best=winner(results);
+      selected=best?best.record.id:null;
+      lastProbe=now();
+      return {selected,engines:snapshot()};
+    })();
+    try{return await busy;}finally{busy=null;}
+  }
+  function preferEngine(id){
+    selected=order.includes(id)?id:null;
+    return selected;
+  }
+  function snapshot(){return order.map(id=>({...records.get(id),selected:selected===id}));}
+  async function capture(active=false){
+    if(busy)return fail('CAP-PROBING','Pruebas de motores en curso');
+    // The expensive PowerShell engines run only after a confirmed manual probe.
+    // Visual monitor scanning works independently of the PokeMMO window title.
+    const fast=['electron-window','electron-visual','electron-win32'];
+    const tries=selected?[selected,...fast.filter(id=>id!==selected)]:fast;
+    let errors=[];
+    for(const id of tries){
+      const delay=id==='win-gdi'||id==='win-print'?20000:
+        id==='electron-win32'?8000:2500;
+      if(now()<(cooldown.get(id)||0)&&selected!==id)continue;
+      const attempt=await one(id,active);
+      if(attempt.result.image){
+        selected=id;cooldown.delete(id);
+        return attempt.result;
+      }
+      errors.push(attempt.record.code);
+      cooldown.set(id,now()+delay);
+      if(selected===id)selected=null;
+    }
+    return fail('CAP-NO-ENGINE','Sin captura válida: '+errors.join(', '));
+  }
+  return {capture,probeAll,snapshot,preferEngine,debug:()=>lastDebug,getGameRect:()=>lastRect,
+    selected:()=>selected,engineIds:()=>order.slice()};
 }
-module.exports={createGameCapture,cropFromDisplay};
+module.exports={createGameCapture,cropFromDisplay,ENGINE_LABELS};

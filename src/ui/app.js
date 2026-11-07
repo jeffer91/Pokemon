@@ -82,8 +82,54 @@ window.radar.on('radar:data',renderData);
 window.radar.getState().then(data=>{renderStatus(data.status);renderData(data);})
   .catch(e=>notice('No se pudo iniciar: '+e.message));
 
+function renderEngines(engines){
+  const root=$('engine-results');root.replaceChildren();
+  const list=Array.isArray(engines)?engines:[];
+  const selected=list.find(e=>e.selected);
+  $('eng-selected').textContent=selected?'Elegido: '+selected.name:'Sin seleccionar';
+  for(const item of list){
+    const row=document.createElement('div');row.className='engine-row';
+    const dot=document.createElement('span');
+    dot.className='diag-dot '+(item.state==='ok'?'ok':item.state==='error'?'error':'');
+    const details=document.createElement('div');details.className='diag-info';
+    const title=document.createElement('strong');title.textContent=item.name||item.id;
+    const sub=document.createElement('small');
+    const ms=Number.isFinite(item.ms)?item.ms+' ms':'—';
+    const evidence=item.gtl?'GTL visible':item.state==='ok'?'Imagen válida':'Sin imagen';
+    sub.textContent=(item.code||'PENDIENTE')+' · '+ms+' · '+evidence+
+      (item.size?' · '+item.size:'');
+    const extra=document.createElement('small');extra.textContent=item.detail||'';
+    details.append(title,sub,extra);
+    const status=document.createElement('span');status.className='diag-code';
+    status.textContent=item.selected?'ELEGIDO':item.state==='ok'?'OK':
+      item.state==='error'?'FALLÓ':'—';
+    row.append(dot,details,status);root.append(row);
+  }
+  if(!list.length)root.textContent='Sin pruebas todavía.';
+}
+$('run-engines').addEventListener('click',async()=>{
+  const button=$('run-engines');
+  if(button.disabled)return;
+  button.disabled=true;button.textContent='Probando...';
+  $('engine-feedback').textContent='Comparando capturas. No se realizan clics en el juego.';
+  try{
+    const response=await window.radar.testEngines();
+    if(response.engines)renderEngines(response.engines);
+    $('engine-feedback').textContent=response.ok?
+      (response.selected?'Motor seleccionado. Abre Radar y verifica la lectura.':
+      'Ningún motor obtuvo una imagen válida. Copia el diagnóstico.') :
+      (response.error||'No se completó la prueba.');
+  }catch(e){$('engine-feedback').textContent='Error al ejecutar la prueba: '+String(e.message||e);}
+  finally{button.disabled=false;button.textContent='Probar 5 motores';}
+});
+window.radar.on('radar:engineProgress',()=>{
+  window.radar.engines().then(renderEngines).catch(()=>{});
+});
+window.radar.engines().then(renderEngines).catch(()=>{});
+
 function renderDiagnostics(info){
   if(!info)return;
+  if(info.engines)renderEngines(info.engines);
   const counts=info.counts||{};
   $('diag-count').textContent=(counts.scans||0)+' lecturas · '+(counts.saved||0)+' guardados';
   const host=$('diag-stages');host.replaceChildren();

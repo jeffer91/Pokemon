@@ -1,18 +1,18 @@
 'use strict';
-const {app,BrowserWindow,desktopCapturer,ipcMain,screen,clipboard}=require('electron');
+const {app,BrowserWindow,desktopCapturer,ipcMain,screen,clipboard,nativeImage}=require('electron');
 const path=require('node:path');
 const crypto=require('node:crypto');
 const {openDatabase,identity}=require('./database');
 const {evaluate}=require('./market');
 const {createRecognizer}=require('./recognition');
-const {locateWindow}=require('./window-locator');
+const {locateWindow,captureNative}=require('./window-locator');
 const {nextDelay,region,shouldCheckHeader}=require('./scan-policy');
 const {inspectThumbnail}=require('./frame-health');
 const {createDiagnostics}=require('./diagnostics');
 const {createGameCapture}=require('./capture-source');
 
 if(!app.requestSingleInstanceLock())app.quit();
-let dashboard,overlay,storage,recognizer,scanTimer,backupTimer,diagnostics,captureAgent;
+let dashboard,overlay,storage,recognizer,scanTimer,backupTimer,diagnostics,captureAgent,engineTesting=false;
 let sessionActive=false,sessionVersion=0,working=false,mode='idle';
 let headerHash='',tableHash='',lastHeaderCheckedAt=0,lastTableCheckedAt=0,lastBalanceReadAt=0,
   lastPublished=0,lastOverlayBounds='',startedAt=0,ocrFailures=0,emptyReads=0;
@@ -65,7 +65,7 @@ async function showCompact(label='Radar'){
   broadcast('radar:overlay',{mode:'compact',label});
   const bounds=overlay.getBounds();
   if(!overlay.isVisible() || bounds.width!==110 || bounds.height!==32)place(compactFallback());
-  const game=await locateWindow();
+  const game=captureAgent?.getGameRect() || await locateWindow() || screen.getPrimaryDisplay().workArea;
   if(!sessionActive||version!==sessionVersion||!game)return;
   const work=screen.getDisplayMatching(game).workArea;
   const width=110,height=32;
@@ -76,7 +76,7 @@ async function showCompact(label='Radar'){
 async function showResults(rows,version,layout=null){
   if(!sessionActive||sessionVersion!==version||!overlay||overlay.isDestroyed())return;
   if(!rows.some(r=>r.decision!=='SILENCIO'))return showCompact('GTL '+rows.length+'/10');
-  const game=await locateWindow();
+  const game=captureAgent?.getGameRect() || await locateWindow() || screen.getPrimaryDisplay().workArea;
   if(!sessionActive||sessionVersion!==version)return;
   if(!game)return showCompact();
   const scale=1; // Automatic positioning; previous manually stored offsets are ignored.
@@ -116,6 +116,7 @@ function schedule(ms){
 }
 async function tick(){
   if(!sessionActive)return;
+  if(engineTesting){schedule(300);return;}
   if(working){schedule(240);return;}
   working=true;
   const version=sessionVersion,start=performance.now();
@@ -134,7 +135,7 @@ async function tick(){
       setStatus({state:'error',message:'Sin captura · '+code,recognized:0});
       await showCompact('Error '+code);return;
     }
-    track('window','ok','WIN-OK','PokéMMO localizado ('+capture.via+')');
+    track('window','ok','WIN-OK','Motor activo: '+capture.via);
     stage='capture';
     const image=capture.image,size=image.getSize(),health=inspectThumbnail(image);
     if(!health.valid){
@@ -145,6 +146,7 @@ async function tick(){
     }
     track('capture','ok',capture.code,
       size.width+' × '+size.height+' píxeles · '+capture.via);
+    diagnostics?.setEngines(captureAgent.snapshot());
     let visibleGtl=health.gtl;
     // Pixel geometry detects the GTL before OCR, even when titles are unreadable.
     // Do not launch CPU-heavy OCR during ordinary gameplay (score is near zero).
@@ -294,7 +296,10 @@ async function tick(){
     await showCompact('Error '+name);
   }finally{
     working=false;
-    if(sessionActive&&version===sessionVersion)schedule(nextDelay(mode));
+    if(sessionActive&&version===sessionVersion){
+      const chosen=captureAgent?.selected();
+      schedule(chosen?.startsWith('win-')?Math.max(1800,nextDelay(mode)):nextDelay(mode));
+    }
   }
 }
 function stopSession(){
@@ -321,6 +326,36 @@ function handlers(){
     balance:storage.latestBalance(),diagnostics:diagnostics?.snapshot()}));
   ipcMain.handle('radar:play',()=>startSession());
   ipcMain.handle('radar:diagnostics',()=>diagnostics?.snapshot()||null);
+  ipcMain.handle('radar:testEngines',async()=>{
+    if(engineTesting)return {ok:false,error:'Ya hay una prueba en ejecución'};
+    engineTesting=true;
+    const wasVisible=dashboard&&!dashboard.isDestroyed()&&dashboard.isVisible();
+    clearTimeout(scanTimer);
+    try{
+      const started=Date.now();
+      while(working && Date.now()-started<12000)
+        await new Promise(resolve=>setTimeout(resolve,100));
+      if(working)throw Error('El lector está ocupado; inténtalo de nuevo');
+      // Let the game become visible while testing monitor-based capture.
+      if(wasVisible){dashboard.minimize();await new Promise(resolve=>setTimeout(resolve,1500));}
+      const result=await captureAgent.probeAll(record=>{
+        diagnostics?.setEngines(captureAgent.snapshot());
+        broadcast('radar:diagnostics',diagnostics?.snapshot());
+        broadcast('radar:engineProgress',record);
+      });
+      if(result.selected)storage.applySettings({captureEngine:result.selected});
+      diagnostics?.setEngines(result.engines);
+      broadcast('radar:diagnostics',diagnostics?.snapshot());
+      return {ok:true,...result};
+    }catch(error){
+      return {ok:false,error:String(error.message||error)};
+    }finally{
+      engineTesting=false;
+      if(wasVisible&&dashboard&&!dashboard.isDestroyed()){dashboard.restore();dashboard.focus();}
+      if(sessionActive)schedule(0);
+    }
+  });
+  ipcMain.handle('radar:engines',()=>captureAgent?.snapshot()||[]);
   ipcMain.handle('radar:copyDiagnostics',()=>{
     if(!diagnostics)return {ok:false};
     clipboard.writeText(diagnostics.report());return {ok:true};
@@ -345,7 +380,10 @@ app.whenReady().then(async()=>{
   // Previous installations must not restart capture without Play.
   if(storage.settings().captureEnabled)storage.applySettings({captureEnabled:false});
   diagnostics=createDiagnostics(app.getPath('userData'));
-  captureAgent=createGameCapture({desktopCapturer,screen,locateWindow,inspectThumbnail});
+  captureAgent=createGameCapture({desktopCapturer,screen,locateWindow,inspectThumbnail,
+    nativeCapture:mode=>captureNative(mode,nativeImage)});
+  captureAgent.preferEngine(storage.settings().captureEngine);
+  diagnostics.setEngines(captureAgent.snapshot());
   track('database','ok','DB-OK','SQLite abierto y verificado');
   createWindows();handlers();
   setTimeout(()=>publishData(true),600);

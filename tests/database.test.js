@@ -39,3 +39,15 @@ test('SQLite v2 retains verified listings and records partial OCR without mixing
   assert.equal(db.db.prepare('PRAGMA user_version').get().user_version,2);
   db.close();fs.rmSync(folder,{recursive:true,force:true});
 });
+
+test('guarda el motor de captura seleccionado sin cambiar el esquema SQLite',()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'radar-engine-'));
+  let db=openDatabase(dir);
+  db.applySettings({captureEngine:'electron-visual'});
+  assert.equal(db.settings().captureEngine,'electron-visual');
+  assert.throws(()=>db.applySettings({captureEngine:'inventado'}));
+  db.close();
+  db=openDatabase(dir);
+  assert.equal(db.settings().captureEngine,'electron-visual');
+  db.close();fs.rmSync(dir,{recursive:true,force:true});
+});
