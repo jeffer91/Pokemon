@@ -214,9 +214,9 @@ function parseScreen(data,width,height,options={}) {
       // "No Reclamado": money waiting for you = the ad was SOLD for that amount.
       const unclaimed=parseMoney(join(fieldWords(row,.53,.63,0,1)));
       const rawState=normalized(join(fieldWords(row,.63,.73,0,1)));
-      // The game says "Terminado" for a finished ad: sold if money is waiting,
-      // expired (Pokémon to take back) if No Reclamado is $0.
-      const state=rawState==='terminado'?(unclaimed>0?'vendido':'expirado'):rawState;
+      // "Terminado" means SOLD (that is why "Tomar" is enabled). After you take
+      // the money, No Reclamado goes back to $0 but it is still a sale.
+      const state=rawState==='terminado'?'vendido':rawState;
       // A finished ad's price is greyed out; the unclaimed amount is the sale.
       const readable=price&&priceWords.every(w=>w.conf>=60);
       const finalPrice=readable?price:state==='vendido'&&unclaimed>0?unclaimed:null;

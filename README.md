@@ -342,6 +342,6 @@ Revisado con la base real del jugador (558 anuncios, 183 especies): el 60 % esta
 
 ## v0.15.1 — Ventas reales detectadas («Terminado»)
 
-- En *Tus Anuncios* el juego marca un anuncio cerrado como **«Terminado»**. Con dinero en **No Reclamado** = **vendido** (ese monto es la venta); con $0 = venció sin venderse.
+- En *Tus Anuncios*, **«Terminado» = vendido** (por eso se habilita «Tomar»), también después de cobrar, cuando No Reclamado vuelve a $0.
 - El precio de un anuncio terminado aparece en gris: si no se lee, se usa el monto de No Reclamado.
 - Primera venta real registrada: Krookodile **Alfa** cauta comprado a 10.000 y vendido a 16.000 en ~15 min; cuota confirmada de 1.000 (el saldo bajó de 33.800 a 32.800 al publicar) → **+5.000**.

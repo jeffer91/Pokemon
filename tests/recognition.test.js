@@ -207,5 +207,5 @@ test('reads own active offer separately from market at doubled OCR resolution',(
   const data={words:[at('Nv. 22 Ariados',.23,.187),at('$2.900',.48,.187),at('Activo',.68,.187),at('Cancelar',.79,.187)]};
   const result=parseScreen(data,2304,1106,{panel,crop,gtlConfirmed:true});
   assert.equal(result.rows.length,0);
-  assert.deepEqual(result.ownListings,[{species:'Ariados',level:22,price:2900,state:'activo',rank:1}]);
+  assert.deepEqual(result.ownListings,[{species:'Ariados',level:22,price:2900,state:'activo',rank:1,unclaimed:0}]);
 });
