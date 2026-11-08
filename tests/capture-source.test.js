@@ -114,7 +114,8 @@ test('selected capture engine is reused without continuously launching all engin
       return [];
     }},
     screen:{getAllDisplays:()=>[]},locateWindow:async()=>rect,
-    inspectThumbnail:inspect,nativeCapture:async()=>{nativeCalls++;return {image:image(),code:'NATIVE-OK'};}
+    inspectThumbnail:inspect,locateGtlPanel:()=>({x:20,y:30,width:900,height:600}),
+    nativeCapture:async()=>{nativeCalls++;return {image:image(),code:'NATIVE-OK'};}
   });
   const result=await api.probeAll();
   assert.equal(result.selected,'electron-window');
@@ -153,4 +154,32 @@ test('available monitor without identified GTL waits, without inventing a captur
   const response=await api.capture();
   assert.equal(response.code,'CAP-WAIT-GTL');
   assert.equal(response.waiting,true);
+});
+
+test('manual testing does not promote an unrelated desktop frame to verified GTL',async()=>{
+  const monitor=image(),display={id:11,bounds,scaleFactor:1};
+  const api=createGameCapture({
+    desktopCapturer:{getSources:async opts=>opts.types[0]==='window'?[]:
+      [{display_id:'11',thumbnail:monitor}]},
+    screen:{getAllDisplays:()=>[display],getDisplayMatching:()=>display},
+    locateWindow:async()=>null,inspectThumbnail:inspect,
+    locateGtlPanel:()=>null
+  });
+  const results=await api.probeAll();
+  assert.equal(results.validated,false);
+  assert.equal(results.selected,null);
+  assert.ok(results.engines.some(e=>e.id==='electron-visual' && e.state==='waiting'));
+});
+test('Win32 diagnostics include a reason instead of a silent null',async()=>{
+  const lookup=async()=>null;
+  lookup.diagnostic=()=> 'WIN32-EXEC: PowerShell was unavailable';
+  const api=createGameCapture({
+    desktopCapturer:{getSources:async()=>[]},
+    screen:{getAllDisplays:()=>[]},
+    locateWindow:lookup,inspectThumbnail:inspect
+  });
+  const result=await api.probeAll();
+  const engine=result.engines.find(e=>e.id==='electron-win32');
+  assert.equal(engine.code,'W32-NOT-FOUND');
+  assert.match(engine.detail,/WIN32-EXEC/);
 });

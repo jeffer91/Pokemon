@@ -122,7 +122,8 @@ function renderEngines(engines){
     const extra=document.createElement('small');extra.textContent=item.detail||'';
     details.append(title,sub,extra);
     const status=document.createElement('span');status.className='diag-code';
-    status.textContent=item.selected?'ELEGIDO':item.state==='ok'?'OK':item.state==='waiting'?'ESPERA':
+    status.textContent=item.selected?(item.gtl?'GTL · ELEGIDO':'ELEGIDO'):
+      item.gtl?'GTL OK':item.state==='ok'?'IMAGEN':item.state==='waiting'?'ESPERA':
       item.state==='error'?'FALLÓ':'—';
     row.append(dot,details,status);root.append(row);
   }
@@ -136,9 +137,10 @@ $('run-engines').addEventListener('click',async()=>{
   try{
     const response=await window.radar.testEngines();
     if(response.engines)renderEngines(response.engines);
+    const winning=response.engines?.find(e=>e.id===response.selected);
     $('engine-feedback').textContent=response.ok?
-      (response.selected?'Motor seleccionado. Abre Radar y verifica la lectura.':
-      'Ningún motor obtuvo una imagen válida. Copia el diagnóstico.') :
+      (winning?.gtl?'Motor validado con GTL visible; verifica lecturas del radar.':
+      'Sin GTL confirmado: se conserva el diagnóstico y debe repetirse la prueba con el mercado visible.') :
       (response.error||'No se completó la prueba.');
   }catch(e){$('engine-feedback').textContent='Error al ejecutar la prueba: '+String(e.message||e);}
   finally{button.disabled=false;button.textContent='Probar 5 motores';}
@@ -152,8 +154,10 @@ function renderDiagnostics(info){
   if(!info)return;
   if(info.engines)renderEngines(info.engines);
   const rows=Array.isArray(info.ocrRows)?info.ocrRows:[];
-  $('ocr-detail-count').textContent=rows.filter(r=>r.state==='complete').length+
-    '/10 completos';
+  const when=info.ocrAt?new Date(info.ocrAt).toLocaleTimeString('es-EC'):'';
+  $('ocr-detail-count').textContent=rows.length?
+    rows.filter(r=>r.state==='complete').length+'/10 · '+(info.ocrStale?'Última lectura ':'Leído ')+when:
+    'Sin lecturas todavía';
   const table=$('ocr-detail-rows');table.replaceChildren();
   for(const r of rows){
     const tr=document.createElement('tr');

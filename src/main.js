@@ -10,6 +10,7 @@ const {nextDelay,region,shouldCheckHeader}=require('./scan-policy');
 const {inspectThumbnail,locateGtlPanel,inferGtlSexes}=require('./frame-health');
 const {createDiagnostics}=require('./diagnostics');
 const {createGameCapture}=require('./capture-source');
+const {sameVisibleOffers}=require('./page-identity');
 const {profileList,coverage,grade,ivScore,validateOverrides}=require('./team');
 
 if(!app.requestSingleInstanceLock())app.quit();
@@ -180,6 +181,7 @@ async function tick(){
     diagnostics?.setEngines(captureAgent.snapshot());
     if(!capture?.image){
       mode='idle';headerHash='';tableHash='';lastTableCheckedAt=0;
+      diagnostics?.markOcrStale();
       const waiting=!!capture?.waiting;
       if(waiting){
         track('capture','warn',capture.code||'CAP-WAIT',capture.detail||'Esperando pantalla visible');
@@ -201,6 +203,7 @@ async function tick(){
     const image=capture.image,size=image.getSize(),health=inspectThumbnail(image);
     if(!health.valid){
       mode='idle';tableHash='';headerHash='';
+      diagnostics?.markOcrStale();
       track('capture','error',health.reason,'Captura vacía o sin imagen útil');
       setStatus({state:'error',message:'No se recibió una imagen válida del juego.',recognized:0});
       await showCompact('Sin imagen');return;
@@ -214,7 +217,7 @@ async function tick(){
       track('gtl','pending','GTL-OCULTO','Monitor captado; GTL no visible');
     // Pixel geometry detects the GTL before OCR, even when titles are unreadable.
     // Do not launch CPU-heavy OCR during ordinary gameplay (score is near zero).
-    if(!visibleGtl && capture.via!=='electron-visual' && mode!=='gtl' && health.score>=4){
+    if(!visibleGtl && mode!=='gtl' && health.score>=4){
       stage='ocr';
       if(Date.now()-startedAt<3500){
         track('gtl','pending','GTL-000','Buscando Servidor de Comercio');
@@ -235,7 +238,7 @@ async function tick(){
     if(!sessionActive||version!==sessionVersion)return;
     if(!visibleGtl){
       mode='idle';tableHash='';lastTableCheckedAt=0;lastDisplayedRows=null;lastPageSignature='';lastMarketImage=null;
-      diagnostics?.setOcrRows([]);
+      diagnostics?.markOcrStale();
       track('gtl','pending','GTL-OCULTO','Pantalla captada; GTL no visible');
       track('ocr','pending','OCR-000','Esperando anuncios');
       setStatus({state:'capturada',message:'Pantalla captada · esperando GTL',recognized:0});
@@ -274,6 +277,7 @@ async function tick(){
     const pageChanged=!!lastMarketImage&&materiallyDifferent(lastMarketImage,marketImage);
     lastMarketImage=marketImage;
     if(pageChanged){
+      diagnostics?.markOcrStale();
       lastDisplayedRows=null;lastPageSignature='';tableHash='';
       await showCompact('Nueva página');
     }
@@ -303,7 +307,7 @@ async function tick(){
     if(!sessionActive||version!==sessionVersion)return;
     const ocrTime=Math.round(performance.now()-ocrStart);
     if(res.advanced){
-      diagnostics?.setOcrRows([]);
+      diagnostics?.markOcrStale();
       track('ocr','pending','OCR-FILTROS','Búsqueda avanzada abierta',ocrTime);
       setStatus({state:'investigando',message:'GTL detectado · ajustando filtros',recognized:0,latency:ocrTime});
       await showCompact('Filtros GTL');return;
@@ -316,7 +320,12 @@ async function tick(){
     };
     const rows=(res.rows||[]).map(enrichSex);
     const partials=(res.partialRows||[]).map(enrichSex);
-    diagnostics?.setOcrRows(res.diagnosticRows||[]);
+    const rowsStillMatch=pageChanged?false:
+      sameVisibleOffers(lastDisplayedRows||[],[...rows,...partials]);
+    if(!rowsStillMatch){
+      lastDisplayedRows=null;lastPageSignature='';
+    }
+    diagnostics?.setOcrRows(res.diagnosticRows||[],(res.sort||'unknown')+' · '+(capture.via||'captura'));
     broadcast('radar:diagnostics',diagnostics?.snapshot());
     const balance=storage.latestBalance();
     emptyReads=rows.length?0:emptyReads+1;
@@ -343,6 +352,7 @@ async function tick(){
       const p={...row,fingerprint:identity(row)};
       const ev=evaluate(p,storage.candidates(row.species),{balance});
       decisions.push({rank:row.rank,species:row.species,price:row.price,
+        level:row.level,nature:row.nature,ivs:row.ivs,
         ...ev,...grade(row,ev,profileFor(row)),reasonText:explain(ev.reason)});
     }
     // Incomplete rows are shown as pending, except for certain budget exclusions.
@@ -351,6 +361,7 @@ async function tick(){
       const ev=row.priceReliable&&Number.isSafeInteger(row.price)?
         evaluate(row,[],{balance}):{decision:'SILENCIO',reason:'LECTURA_INCOMPLETA'};
       decisions.push({rank:row.rank,species:row.species,price:row.price,
+        level:row.level,nature:row.nature,ivs:row.ivs,
         ...ev,...grade(row,ev,profileFor(row)),reasonText:explain(ev.reason)});
     }
     const actionable=decisions.filter(d=>d.decision!=='SILENCIO').length;
@@ -377,13 +388,14 @@ async function tick(){
     if(!sessionActive||version!==sessionVersion)return;
     // Check for a material page change without comparing PNG bytes; identical
     // offers may have small hover/timer animations while OCR is running.
-    if(decisions.length){
+    if(decisions.length && Date.now()-now > 1500){
       stage='capture';
       const fresh=await getGameSource(true);
       if(!fresh?.image)return;
       const bounds=fresh.image.getSize();
       const freshPanel=locateGtlPanel(fresh.image);
       if(!freshPanel){
+        diagnostics?.markOcrStale();
         lastPageSignature='';lastDisplayedRows=null;
         await showCompact('GTL oculto');
         return;
@@ -397,6 +409,7 @@ async function tick(){
       if(freshRect.height<=0)return;
       const freshMarket=fresh.image.crop(freshRect);
       if(materiallyDifferent(marketImage,freshMarket)){
+        diagnostics?.markOcrStale();
         tableHash='';lastTableCheckedAt=0;
         lastPageSignature='';lastDisplayedRows=null;
         await showCompact('Nueva página');
@@ -409,7 +422,7 @@ async function tick(){
       const previous=new Map((lastDisplayedRows||[]).map(d=>[d.rank,d]));
       const current=new Map(decisions.map(d=>[d.rank,d]));
       // A temporary OCR miss must not erase a previously evaluated row.
-      if(!pageChanged)for(const [rank,prior] of previous){
+      if(!pageChanged&&rowsStillMatch)for(const [rank,prior] of previous){
         const incoming=current.get(rank);
         if(!incoming||(incoming.decision==='SILENCIO'&&incoming.score===null))
           current.set(rank,prior);
@@ -445,6 +458,7 @@ async function tick(){
 function stopSession(){
   sessionActive=false;sessionVersion++;clearTimeout(scanTimer);
   mode='idle';headerHash='';tableHash='';lastHeaderCheckedAt=0;lastTableCheckedAt=0;
+  diagnostics?.markOcrStale();
   lastOverlayBounds='';lastPageSignature='';lastDisplayedRows=null;lastDisplayedLayout=null;lastMarketImage=null;
   overlay?.hide();
   setStatus({state:'inactivo',message:'Radar detenido.',recognized:0,latency:null});
@@ -492,7 +506,8 @@ function handlers(){
         broadcast('radar:diagnostics',diagnostics?.snapshot());
         broadcast('radar:engineProgress',record);
       });
-      if(result.selected)storage.applySettings({captureEngine:result.selected});
+      if(result.selected && result.engines.some(e=>e.id===result.selected && e.gtl))
+        storage.applySettings({captureEngine:result.selected});
       diagnostics?.setEngines(result.engines);
       broadcast('radar:diagnostics',diagnostics?.snapshot());
       return {ok:true,...result};

@@ -1,6 +1,6 @@
 {
   "name": "pokeradar-gtl",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "description": "PokéRadar: radar GTL, catálogo competitivo por lotes y sugerencias basadas en SQLite",
   "private": true,
   "main": "src/main.js",
@@ -10,7 +10,7 @@
   "scripts": {
     "start": "electron .",
     "test": "node --test tests/*.test.js",
-    "check": "node --check src/main.js && node --check src/database.js && node --check src/market.js && node --check src/recognition.js && node --check src/window-locator.js && node --check src/preload.js && node --check src/ui/app.js && node --check src/ui/overlay.js && node --check src/scan-policy.js && node --check src/frame-health.js && node --check src/diagnostics.js && node --check src/capture-source.js && node --check src/team.js && node --check src/catalog.js && node --check src/research.js"
+    "check": "node --check src/main.js && node --check src/database.js && node --check src/market.js && node --check src/recognition.js && node --check src/window-locator.js && node --check src/preload.js && node --check src/ui/app.js && node --check src/ui/overlay.js && node --check src/scan-policy.js && node --check src/frame-health.js && node --check src/diagnostics.js && node --check src/capture-source.js && node --check src/team.js && node --check src/catalog.js && node --check src/research.js && node --check src/page-identity.js"
   },
   "dependencies": {
     "@tesseract.js-data/spa": "1.0.0",

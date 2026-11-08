@@ -3,10 +3,12 @@ const {execFile}=require('node:child_process');
 const {promisify}=require('node:util');
 const execFileAsync=promisify(execFile);
 const script=String.raw`
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 Add-Type -TypeDefinition @'
 using System;
 using System.Text;
 using System.Runtime.InteropServices;
+using System.Diagnostics;
 public static class RadarWindow {
   [StructLayout(LayoutKind.Sequential)] public struct RECT {public int Left, Top, Right, Bottom;}
   [StructLayout(LayoutKind.Sequential)] public struct POINT {public int X,Y;}
@@ -14,6 +16,20 @@ public static class RadarWindow {
   [DllImport("user32.dll")] public static extern bool EnumWindows(EnumCallback fn,IntPtr arg);
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetWindowText(IntPtr hWnd,StringBuilder buffer,int max);
   [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hwnd,out uint pid);
+  public static bool Matches(IntPtr hwnd,string title) {
+    string plain=title.Normalize(NormalizationForm.FormD);
+    StringBuilder clean=new StringBuilder();
+    foreach(char c in plain)
+      if(System.Globalization.CharUnicodeInfo.GetUnicodeCategory(c)!=System.Globalization.UnicodeCategory.NonSpacingMark)
+        clean.Append(char.ToLowerInvariant(c));
+    if(clean.ToString().Contains("pokemmo"))return true;
+    try{
+      uint pid;GetWindowThreadProcessId(hwnd,out pid);
+      string name=Process.GetProcessById((int)pid).ProcessName.ToLowerInvariant();
+      return name.Contains("pokemmo");
+    }catch{return false;}
+  }
   [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr hWnd,out RECT rect);
   [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr hWnd,ref POINT point);
   public static string Get() {
@@ -21,7 +37,7 @@ public static class RadarWindow {
     EnumWindows((hwnd,arg)=> {
       if (!IsWindowVisible(hwnd)) return true;
       StringBuilder b=new StringBuilder(256); GetWindowText(hwnd,b,b.Capacity);
-      if (b.ToString().IndexOf("PokeMMO",StringComparison.OrdinalIgnoreCase)<0 && b.ToString().IndexOf("PokéMMO",StringComparison.OrdinalIgnoreCase)<0) return true;
+      if (!Matches(hwnd,b.ToString())) return true;
       RECT r; POINT p=new POINT {X=0,Y=0};
       if(!GetClientRect(hwnd,out r) || !ClientToScreen(hwnd,ref p))return true;
       int w=r.Right-r.Left, h=r.Bottom-r.Top;
@@ -34,7 +50,7 @@ public static class RadarWindow {
 '@
 [RadarWindow]::Get()
 `;
-let last=null,lastAt=0,inFlight=null;
+let last=null,lastAt=0,inFlight=null,lastError=null;
 async function locateWindow(){
   if(process.platform!=='win32')return null;
   // Return the active lookup, not a stale null while PowerShell is still starting.
@@ -43,13 +59,17 @@ async function locateWindow(){
   lastAt=Date.now();
   inFlight=(async()=>{try{
     const b64=Buffer.from(script,'utf16le').toString('base64');
-    const {stdout}=await execFileAsync('powershell.exe',['-NoProfile','-NonInteractive','-EncodedCommand',b64],{timeout:7000,windowsHide:true});
+    const {stdout,stderr}=await execFileAsync('powershell.exe',
+      ['-NoLogo','-NoProfile','-NonInteractive','-EncodedCommand',b64],
+      {timeout:7000,windowsHide:true,encoding:'utf8'});
+    if(stderr?.trim())lastError='WIN32-STDERR: '+stderr.trim().slice(0,120);
     const p=stdout.trim().split(',').map(Number);
-    if(p.length!==4||!p.every(Number.isFinite)||p[2]<400||p[3]<300){last=null;return null;}
-    last={x:p[0],y:p[1],width:p[2],height:p[3]};return last;
-  }catch{last=null;return null;}})();
+    if(p.length!==4||!p.every(Number.isFinite)||p[2]<400||p[3]<300){last=null;lastError=lastError||'WIN32-NOT-FOUND: sin ventana o coordenadas';return null;}
+    last={x:p[0],y:p[1],width:p[2],height:p[3]};lastError=null;return last;
+  }catch(error){last=null;lastError='WIN32-EXEC: '+String(error.message||error).slice(0,160);return null;}})();
   try{return await inFlight;}finally{inFlight=null;}
 }
+locateWindow.diagnostic=()=>lastError;
 module.exports={locateWindow,captureNative};
 
 
@@ -59,10 +79,12 @@ const nativeScript=String.raw`
 $ErrorActionPreference='Stop'
 Add-Type -AssemblyName System.Drawing
 Add-Type -AssemblyName System.Windows.Forms
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Diagnostics;
 public static class RadarNative {
   [StructLayout(LayoutKind.Sequential)] public struct RECT {public int Left,Top,Right,Bottom;}
   [StructLayout(LayoutKind.Sequential)] public struct POINT {public int X,Y;}
@@ -70,6 +92,18 @@ public static class RadarNative {
   [DllImport("user32.dll")] public static extern bool EnumWindows(Callback cb,IntPtr param);
   [DllImport("user32.dll",CharSet=CharSet.Unicode)] public static extern int GetWindowText(IntPtr h,StringBuilder b,int n);
   [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h,out uint pid);
+  public static bool Matches(IntPtr hwnd,string title) {
+    string plain=title.Normalize(NormalizationForm.FormD);
+    StringBuilder clean=new StringBuilder();
+    foreach(char c in plain)
+      if(System.Globalization.CharUnicodeInfo.GetUnicodeCategory(c)!=System.Globalization.UnicodeCategory.NonSpacingMark)
+        clean.Append(char.ToLowerInvariant(c));
+    if(clean.ToString().Contains("pokemmo"))return true;
+    try{uint pid;GetWindowThreadProcessId(hwnd,out pid);
+      return Process.GetProcessById((int)pid).ProcessName.ToLowerInvariant().Contains("pokemmo");
+    }catch{return false;}
+  }
   [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr h,out RECT r);
   [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr h,ref POINT p);
   [DllImport("user32.dll",SetLastError=true)] public static extern bool PrintWindow(IntPtr h,IntPtr dc,uint flags);
@@ -79,7 +113,7 @@ public static class RadarNative {
     EnumWindows((h,p)=>{
       if(!IsWindowVisible(h))return true;
       var b=new StringBuilder(256);GetWindowText(h,b,b.Capacity);
-      if(b.ToString().IndexOf("PokeMMO",StringComparison.OrdinalIgnoreCase)<0 && b.ToString().IndexOf("PokéMMO",StringComparison.OrdinalIgnoreCase)<0)return true;
+      if(!Matches(h,b.ToString()))return true;
       RECT r;POINT v=new POINT{X=0,Y=0};
       if(!GetClientRect(h,out r)||!ClientToScreen(h,ref v))return true;
       if(r.Right-r.Left<400||r.Bottom-r.Top<300)return true;
@@ -92,7 +126,9 @@ public static class RadarNative {
 try {
   $r=[RadarNative+RECT]::new()
   $pt=[RadarNative+POINT]::new()
-  $hwnd=[RadarNative]::Find([ref]$r,[ref]$pt)
+  # GDI captures the desktop even when the game HWND cannot be found.
+  $hwnd=[IntPtr]::Zero
+  if('MODE' -ne 'copy'){$hwnd=[RadarNative]::Find([ref]$r,[ref]$pt)}
   if('MODE' -eq 'copy'){
     # An independent GDI full-screen capture; no game window title or HWND needed.
     $bounds=[System.Windows.Forms.SystemInformation]::VirtualScreen
@@ -127,7 +163,9 @@ try {
 async function captureNative(mode,nativeImage){
   if(process.platform!=='win32')return {code:'NATIVE-UNSUPPORTED',detail:'Solo Windows 11'};
   if(!['copy','print'].includes(mode))throw Error('Modo nativo desconocido');
-  const command=nativeScript.replace("'MODE'",mode==='copy'?"'copy'":"'print'");
+  let command;
+  try{command=renderNativeScript(mode);}
+  catch(error){return {code:'NATIVE-MODE',detail:String(error.message||error)};}
   const encoded=Buffer.from(command,'utf16le').toString('base64');
   let stdout;
   try{
@@ -153,3 +191,11 @@ async function captureNative(mode,nativeImage){
       detail:mode==='copy'?'Captura de pantalla GDI':'Captura de ventana PrintWindow'};
   }catch(e){return {code:'NATIVE-DECODE',detail:String(e.message||e).slice(0,140)};}
 }
+
+function renderNativeScript(mode){
+  if(!['copy','print'].includes(mode))throw Error('Modo nativo desconocido');
+  const selectors=(nativeScript.match(/'MODE'/g)||[]).length;
+  if(selectors!==3)throw Error('Se esperaban tres selectores nativos; se detectaron '+selectors);
+  return nativeScript.replaceAll("'MODE'",mode==='copy'?"'copy'":"'print'");
+}
+module.exports.renderNativeScript=renderNativeScript;

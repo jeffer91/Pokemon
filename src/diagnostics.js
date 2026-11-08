@@ -10,7 +10,7 @@ function createDiagnostics(folder){
   for(const [id,label] of Object.entries(LABELS))
     stages[id]={id,label,state:'pending',code:'PENDIENTE',detail:'Sin comprobar',at:null,ms:null};
   const events=[];let scans=0,recognized=0,saved=0,errors=0;
-  let engineResults=[],ocrRows=[],balance=null;
+  let engineResults=[],ocrRows=[],ocrAt=null,ocrStale=false,ocrContext=null,balance=null;
   const logfile=path.join(folder,'pokeradar-diagnostico.jsonl');
   function record(id,state,code,detail,ms=null){
     if(!stages[id])throw Error('Diagnóstico desconocido: '+id);
@@ -45,7 +45,12 @@ function createDiagnostics(folder){
       selected:!!item.selected,at:item.at||null
     })):[];
   }
-  function setOcrRows(items){
+  function setOcrRows(items,context=null){
+    // Preserve last successful diagnosis when navigating away from GTL.
+    // An empty result means no new sample, not a blank historical read.
+    if(!Array.isArray(items)||!items.length)return;
+    ocrAt=new Date().toISOString();ocrStale=false;
+    ocrContext=context?String(context).slice(0,120):null;
     ocrRows=(Array.isArray(items)?items:[]).slice(0,10).map(r=>({
       rank:r.rank,species:String(r.species||'—').slice(0,40),
       level:Number.isInteger(r.level)?r.level:null,
@@ -55,12 +60,17 @@ function createDiagnostics(folder){
       missingFields:(r.missingFields||[]).slice(0,9)
     }));
   }
+  function markOcrStale(){if(ocrRows.length)ocrStale=true;}
   function setBalance(value,source){
-    balance={amount:Number.isSafeInteger(value)?value:null,
-      state:Number.isSafeInteger(value)?'ok':'pending',
+    if(!Number.isSafeInteger(value)){
+      // Keep the last known value as a historical reading, never as fresh.
+      if(balance?.state==='ok')balance={...balance,state:'stale'};
+      return;
+    }
+    balance={amount:value,state:'ok',
       source:String(source||'OCR').slice(0,40),at:new Date().toISOString()};
   }
-  function snapshot(){return {ocrRows:ocrRows.map(x=>({...x,ivs:[...x.ivs],missingFields:[...x.missingFields]})),
+  function snapshot(){return {ocrAt,ocrStale,ocrContext,ocrRows:ocrRows.map(x=>({...x,ivs:[...x.ivs],missingFields:[...x.missingFields]})),
     balance:balance?{...balance}:null,engines:engineResults.map(x=>({...x})),
     stages:Object.values(stages).map(s=>({...s})),
     counts:{scans,recognized,saved,errors},events:events.slice(0,15)};}
@@ -75,7 +85,9 @@ function createDiagnostics(folder){
         ' | Panel: '+e.panelRatio+'% | Imagen: '+(e.size||'no')+
         (e.selected?' | SELECCIONADO':'')),
       'SALDO: '+(info.balance?.amount??'sin confirmar')+' | '+(info.balance?.source||'sin leer'),
-      'DIAGNÓSTICO POR FILA OCR',
+      'DIAGNÓSTICO POR FILA OCR'+(info.ocrAt?' | '+info.ocrAt:'')+
+        (info.ocrStale?' | ÚLTIMA LECTURA, GTL NO ACTUAL':'')+
+        (info.ocrContext?' | '+info.ocrContext:''),
       ...info.ocrRows.map(r=>'Fila '+r.rank+': '+r.state+' | '+r.species+
         ' | Nv. '+(r.level??'?')+' | '+(r.nature||'?')+
         ' | Precio '+(r.price??'?')+
@@ -83,6 +95,6 @@ function createDiagnostics(folder){
         ' | Falta: '+r.missingFields.join(',')),
       ...info.events.map(e=>e.at+' '+e.stage+' '+e.code+' '+e.detail)].join('\n');
   }
-  return {record,scan,setEngines,setOcrRows,setBalance,snapshot,report};
+  return {record,scan,setEngines,setOcrRows,markOcrStale,setBalance,snapshot,report};
 }
 module.exports={createDiagnostics,LABELS};

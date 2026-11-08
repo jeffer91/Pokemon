@@ -43,3 +43,34 @@ test('diagnostics retain per-row OCR failures without storing screenshots',()=>{
   assert.doesNotMatch(d.report(),/data:image/);
   fs.rmSync(tmp,{recursive:true,force:true});
 });
+
+test('OCR diagnosis remains visible after GTL closes or an empty scan arrives',()=>{
+  const temp=fs.mkdtempSync(path.join(os.tmpdir(),'pokeradar-last-ocr-'));
+  try{
+    const d=createDiagnostics(temp);
+    d.setOcrRows([{rank:1,species:'Minccino',price:38888,ivs:[31,29,31,31,13,16],
+      state:'partial',missingFields:['NATURALEZA']}],'newest · electron-visual');
+    const previous=d.snapshot().ocrAt;
+    d.markOcrStale();
+    d.setOcrRows([]);
+    assert.equal(d.snapshot().ocrRows.length,1);
+    assert.equal(d.snapshot().ocrStale,true);
+    assert.equal(d.snapshot().ocrAt,previous);
+    assert.match(d.report(),/ÚLTIMA LECTURA/);
+    assert.match(d.report(),/NATURALEZA/);
+    d.setOcrRows([{rank:1,species:'Ditto',price:6000,ivs:[1,2,3,4,5,6],
+      state:'complete',missingFields:[]}],'newest · win-gdi');
+    assert.equal(d.snapshot().ocrStale,false);
+    assert.equal(d.snapshot().ocrRows[0].species,'Ditto');
+  }finally{fs.rmSync(temp,{recursive:true,force:true});}
+});
+test('failed HUD OCR does not erase the previously confirmed balance',()=>{
+  const temp=fs.mkdtempSync(path.join(os.tmpdir(),'pokeradar-balance-'));
+  try{
+    const d=createDiagnostics(temp);
+    d.setBalance(38096,'HUD OCR');
+    d.setBalance(null,'HUD OCR');
+    assert.equal(d.snapshot().balance.amount,38096);
+    assert.equal(d.snapshot().balance.state,'stale');
+  }finally{fs.rmSync(temp,{recursive:true,force:true});}
+});

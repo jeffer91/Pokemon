@@ -28,6 +28,7 @@ function createGameCapture({desktopCapturer,screen,locateWindow,inspectThumbnail
     code:'PENDIENTE',detail:'Sin probar',ms:null,frames:0,gtl:false,at:null}]));
   let selected=null,lastRect=null,lastDebug=null,lastProbe=0,busy=null,visualDisplayId=null;
   const cooldown=new Map();
+  let missSince=0,lastNativeFallbackAt=0;
   function health(image){
     try{
       if(!image||image.isEmpty())return {valid:false,gtl:false,panelRatio:0,score:0};
@@ -35,6 +36,8 @@ function createGameCapture({desktopCapturer,screen,locateWindow,inspectThumbnail
     }catch{return {valid:false,gtl:false,score:0};}
   }
   const fail=(code,detail,meta={})=>({image:null,code,detail,...meta});
+  const locateHint=()=>typeof locateWindow?.diagnostic==='function'?
+    (' · '+String(locateWindow.diagnostic()||'').slice(0,140)) : '';
   function update(id,result,elapsed){
     const good=!!result.image && health(result.image).valid;
     const h=good?health(result.image):{gtl:false,score:0,panelRatio:0};
@@ -74,13 +77,13 @@ function createGameCapture({desktopCapturer,screen,locateWindow,inspectThumbnail
           detail:'Ventana PokéMMO captada y localizada ('+names.length+' coincidencias)'};
       }
       return fail(names.length?'EW-NO-RECT':'EW-NOT-FOUND',names.length?
-        'Ventana detectada sin imagen o posición confirmada; usando pantalla':
+        'Ventana detectada sin imagen o posición confirmada; usando pantalla'+locateHint():
         'Electron enumeró '+sources.length+' ventanas sin PokéMMO');
     }
     if(id==='electron-win32'){
       let rect;
       try{rect=await locateWindow();}catch(e){return fail('W32-ERROR',String(e.message||e));}
-      if(!validRect(rect))return fail('W32-NOT-FOUND','Win32 no localizó la ventana del juego');
+      if(!validRect(rect))return fail('W32-NOT-FOUND','Win32 no localizó la ventana del juego'+locateHint());
       let display,src;
       try {
         display=screen.getDisplayMatching(rect);
@@ -119,8 +122,16 @@ function createGameCapture({desktopCapturer,screen,locateWindow,inspectThumbnail
       // An actual GTL panel confirms which display contains the game.
       const found=candidates.filter(c=>c.panel).sort((a,b)=>
         (b.health.panelRatio||0)-(a.health.panelRatio||0))[0];
-      if(!found && selected!=='electron-visual' && visualDisplayId===null)
+      if(!found && selected!=='electron-visual' && visualDisplayId===null){
+        // If the full-width visual panel detector misses the GTL, allow the
+        // header OCR to inspect a plausible single monitor. Never pick one
+        // blindly when multiple monitors are present.
+        if(candidates.length===1 && (candidates[0].health.score||0)>=4)
+          return {image:candidates[0].src.thumbnail,rect:candidates[0].display.bounds,
+            via:id,code:'VIS-REVISAR',visibleGtl:false,
+            detail:'Imagen del monitor disponible; verificando encabezado por OCR'};
         return {...fail('VIS-WAIT-GTL','Monitor disponible; esperando identificar el GTL'),waiting:true};
+      }
       const best=found||candidates.find(c=>String(c.display.id)===String(visualDisplayId))||
         (candidates.length===1?candidates[0]:null);
       if(!best)return {
@@ -167,6 +178,7 @@ function createGameCapture({desktopCapturer,screen,locateWindow,inspectThumbnail
   async function probeAll(onProgress){
     if(busy)return busy;
     busy=(async()=>{
+      const previous=selected;
       const results=[];
       for(const id of order){
         const attempt=await one(id,true);
@@ -174,9 +186,13 @@ function createGameCapture({desktopCapturer,screen,locateWindow,inspectThumbnail
         if(typeof onProgress==='function')await onProgress(attempt.record);
       }
       const best=winner(results);
-      selected=best?best.record.id:null;
+      // A valid desktop frame is not proof that it contains the GTL.
+      // Do not overwrite the previous preferred engine based on a blank
+      // or unrelated screen during the manual comparison.
+      const verified=best?.record.gtl===true;
+      selected=verified?best.record.id:previous;
       lastProbe=now();
-      return {selected,engines:snapshot()};
+      return {selected,validated:verified,engines:snapshot()};
     })();
     try{return await busy;}finally{busy=null;}
   }
@@ -187,28 +203,38 @@ function createGameCapture({desktopCapturer,screen,locateWindow,inspectThumbnail
   function snapshot(){return order.map(id=>({...records.get(id),selected:selected===id}));}
   async function capture(active=false){
     if(busy)return fail('CAP-PROBING','Pruebas de motores en curso');
-    // The expensive PowerShell engines run only after a confirmed manual probe.
-    // Visual monitor scanning works independently of the PokeMMO window title.
+    // Native engines are slower and may be unavailable with GPU rendering.
+    // They only take over if the fast engines produce no usable frame.
+    // Visual monitor scanning works independently of the window title.
     const fast=['electron-visual','electron-window','electron-win32'];
     // GDI captures independently of Electron/title; PrintWindow is last
     // because some GPU renderers return an empty frame.
     const backup=['win-gdi','win-print'];
     const tries=selected?[selected,...fast.filter(id=>id!==selected),
       ...backup.filter(id=>id!==selected)]:[...fast,...backup];
-    let errors=[];
+    let errors=[],allowedNative=false;
+    // Avoid invoking a multi-second PowerShell process on each idle frame.
+    // Manual tests still exercise every engine independently.
+    if(missSince && now()-missSince>12000 && now()-lastNativeFallbackAt>30000)
+      allowedNative=true;
+    if(selected?.startsWith('win-'))allowedNative=true;
     for(const id of tries){
+      if(id.startsWith('win-') && !allowedNative)continue;
+      if(id.startsWith('win-') && lastNativeFallbackAt===0)lastNativeFallbackAt=now();
       const delay=id==='win-gdi'||id==='win-print'?30000:
         id==='electron-win32'?5000:1500;
       if(now()<(cooldown.get(id)||0)&&selected!==id)continue;
       const attempt=await one(id,active);
       if(attempt.result.image){
-        selected=id;cooldown.delete(id);
+        selected=id;cooldown.delete(id);missSince=0;
         return attempt.result;
       }
       errors.push(attempt.record.code);
       cooldown.set(id,now()+delay);
+      if(id.startsWith('win-'))lastNativeFallbackAt=now();
       if(selected===id)selected=null;
     }
+    if(!missSince)missSince=now();
     if(errors.length===0)return {...fail('CAP-WAIT','Esperando reintento de los motores de captura'),waiting:true};
     if(errors.includes('VIS-WAIT-GTL')||errors.includes('VIS-IDLE'))
       return {...fail('CAP-WAIT-GTL','Pantalla disponible; esperando que el GTL sea visible'),waiting:true};

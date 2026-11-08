@@ -90,3 +90,10 @@ nav{flex-wrap:wrap}
 .owned-switch[aria-pressed="true"]{border-color:#b4dbc4;background:#dff2e7;color:#116f45}
 .search-source{display:block;font-size:10px;color:#1f8056;margin-top:4px}
 @media(max-width:620px){.catalog-grid{grid-template-columns:1fr}}
+
+/* v0.6.2: single-row navigation and readable last-OCR diagnostics. */
+nav{flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden;scrollbar-width:thin;white-space:nowrap}
+.tab{flex:1 0 auto;min-width:82px;padding:10px 8px}
+#ocr-detail-rows td{font-size:11px;white-space:nowrap}
+#ocr-detail-rows td:last-child{max-width:240px;white-space:normal;overflow-wrap:anywhere;text-align:left}
+#ocr-detail-count{font-size:11px}

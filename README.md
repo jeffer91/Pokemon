@@ -150,3 +150,17 @@ SQLite se migra sin destruir registros al esquema **v5** y crea `catalog_profile
 - **Saldo HUD:** lectura sobre recorte ampliado que acepta algunos símbolos de moneda omitidos por OCR. Cuando falta saldo, la app no da `COMPRAR`; muestra puntuaciones parciales y conserva la reserva de liquidez del 30 %.
 - **Persistencia y velocidad:** se eliminó la búsqueda PowerShell redundante al ubicar la ventana flotante y se restringieron los reintentos de OCR de saldo; las etiquetas y la base SQLite no se borran por un fallo transitorio de captura.
 - **Pruebas:** `npm run check` y `npm test` incluyen título acentuado, captura GDI independiente, lectura de saldo, Nidoran♂ y diagnósticos por fila. El objetivo sub-segundo y 10/10 anuncios todavía deben medirse contra imágenes y hardware reales; no se garantizan por pruebas sintéticas.
+
+## v0.6.2 — Captura confiable y diagnóstico persistente
+
+- Se corrigió un error por el que el motor **Windows GDI** ejecutaba el segundo selector de **PrintWindow**. GDI usa exclusivamente `CopyFromScreen` y puede tomar el escritorio virtual sin encontrar primero una ventana de PokéMMO. PrintWindow permanece como motor adicional, pero los videojuegos acelerados por GPU pueden no admitirlo.
+- Win32 ahora busca `PokéMMO` y `PokeMMO` con normalización de tildes, y utiliza el nombre del proceso cuando el texto de la ventana no coincide. Los fallos de PowerShell se registran como diagnóstico, en lugar de devolverse como un `null` silencioso.
+- El monitor visual puede recurrir a OCR de encabezado cuando el detector geométrico no identifica un panel, siempre que la imagen sea plausible. Los motores nativos se prueban automáticamente solo después de un fallo sostenido, para no lanzar PowerShell en cada ciclo del juego.
+- El comparador manual **no sustituye el motor seleccionado** cuando no obtiene evidencia real del GTL. Una captura de escritorio no basta para validar un motor.
+- **OCR por fila** conserva el último diagnóstico, su fecha y su motor, incluso después de salir del GTL o pulsar Stop. Una lectura vacía o un fallo transitorio no borra la evidencia anterior. El saldo confirmado tampoco se borra si falla una lectura posterior; pasa a estado histórico.
+- Las etiquetas no conservan recomendaciones de otro anuncio cuando cambian especie, nivel, precio o IV conocidos en una misma fila.
+- Navegación horizontal de una sola línea, manteniendo el estilo claro y minimalista.
+
+Las pruebas unitarias validan el reemplazo de **todos** los selectores GDI/PrintWindow, el respaldo visual, el diagnóstico persistente y la invalidación de calificaciones obsoletas. Sin acceso al PC Windows 11 ni a los píxeles del juego en tiempo real, no puede asegurarse la disponibilidad de cada motor o el reconocimiento completo 10/10; para eso se requieren pruebas en tu equipo.
+
+Actualizar: `git pull origin main`, `npm install`, `npm run check`, `npm test`, `npm start`.

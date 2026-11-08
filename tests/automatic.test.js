@@ -71,3 +71,16 @@ test('GTL row alignment uses title-first stripe and OCR row extrapolation',()=>{
   assert.match(rec,/Math\.round\(\(v-\.18\)\/step\)/);
   assert.match(overlay,/decision\.dense/);
 });
+
+test('last OCR readings persist and stale market labels cannot be reused',()=>{
+  const main=read('src/main.js'),diag=read('src/diagnostics.js');
+  const page=read('src/page-identity.js'),capture=read('src/capture-source.js');
+  const window=read('src/window-locator.js');
+  assert.match(main,/sameVisibleOffers\(/);
+  assert.match(main,/markOcrStale\(/);
+  assert.doesNotMatch(main,/setOcrRows\(\[\]\)/);
+  assert.match(diag,/ocrStale/);
+  assert.match(page,/sameVisibleOffers/);
+  assert.match(capture,/lastNativeFallbackAt/);
+  assert.match(window,/renderNativeScript/);
+});
