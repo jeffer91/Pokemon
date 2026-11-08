@@ -115,6 +115,50 @@ function isGtlHeader(text) {
 function cleanupName(name){
   return String(name||'').replace(/\s+/g,' ').trim();
 }
+// Advanced Search form: label button | value | label button | value.
+// Positions are panel units (calibrated on a 1920×1080 capture).
+const FILTER_COLUMNS=[{label:[.03,.30],value:[.30,.47]},{label:[.49,.74],value:[.74,.95]}];
+function filterField(label){
+  const s=normalized(label).replace(/[^a-z]/g,'');
+  if(!s)return null;
+  if(s.includes('naturaleza'))return 'nature';
+  if(s.includes('coincidencias'))return 'matches';
+  const bound=s.endsWith('max')?'Max':s.endsWith('min')||s.endsWith('minimas')?'Min':null;
+  if(!bound||/ev/.test(s.replace(/nivel|velocidad|especial|defensa/g,'')))return null;
+  if(s.includes('nivel'))return 'level'+bound;
+  if(s.includes('precio'))return null;
+  const stat=s.includes('especial')?(s.includes('def')?3+1:3):
+    s.includes('velocidad')?5:s.includes('defensa')?2:s.includes('ataque')?1:s.includes('ps')?0:null;
+  return stat===null?null:'iv'+bound+stat;
+}
+function parseFilters(words){
+  const out={},cells={};
+  const lines=[];
+  for(const w of [...words].sort((a,b)=>a.y-b.y)){
+    const line=lines.find(l=>Math.abs(l.y-w.y)<.012);
+    if(line)line.words.push(w);else lines.push({y:w.y,words:[w]});
+  }
+  for(const line of lines){
+   const fields=FILTER_COLUMNS.map(col=>filterField(join(fieldWords(line.words,col.label[0],col.label[1],0,1))));
+   // Rows pair Min (left) with Max (right): a blurred left label is inferred.
+   if(!fields[0]&&fields[1]&&/Max/.test(fields[1]))fields[0]=fields[1].replace('Max','Min');
+   for(const [k,col] of FILTER_COLUMNS.entries()){
+    const field=fields[k];
+    if(!field)continue;
+    cells[field]={x:col.value,y:line.y};
+    const raw=join(fieldWords(line.words,col.value[0],col.value[1],0,1).filter(w=>!/^[-+=—–]+\.?$/.test(w.text)));
+    if(field==='nature'){
+      const n=normalized(raw).replace(/[^a-z]/g,'');
+      out.nature=n?(fuzzyNature(n)||n):null;
+    }else{
+      const digits=raw.replace(/\D/g,'');
+      if(digits)out[field]=Number(digits);
+      else if(/^[-—–=\s]*$/.test(raw)&&raw)out[field]=null;
+    }
+   }
+  }
+  return {values:out,cells};
+}
 function parseScreen(data,width,height,options={}) {
   let words=cleanWords(data,width,height);
   const rect=options.crop;
@@ -137,7 +181,8 @@ function parseScreen(data,width,height,options={}) {
       w.x>.68&&w.x<.84&&w.y>.28&&w.y<.80)).length;
   const gtl=options.gtlConfirmed===true || (isGtlHeader(all) &&
     (all.includes('anuncios')||all.includes('comprar')||all.includes('precio'))) || buyButtons>=3;
-  const advanced=gtl && (all.includes('precio minimo')||all.includes('iv ataque min')||
+  const advanced=gtl && (all.includes('precio minimo')||all.includes('coincidencias de iv')||
+    all.includes('ocultar ditto')||all.includes('nivel min')||all.includes('habilidad oculta')||all.includes('iv ataque min')||
     all.includes('coincidencias de iv')||all.includes('iv ps max'));
   const context=isPanel?'gtl-panel':
     normalized(join(fieldWords(words,.20,.80,.19,.25))).slice(0,180)||'general';
@@ -153,10 +198,13 @@ function parseScreen(data,width,height,options={}) {
   const footerWord=words.find(w=>normalized(w.text)==='mostrando');
   const base={gtl,advanced,context,sort:isOld?'oldest':isNew?'newest':'unknown',
     balance,page:null,pageInfo,footerY:footerWord?footerWord.y:null,wordCount:words.length};
-  if(isPanel && /cancelar/.test(all) && /activo|expirado|vendido/.test(all)){
+  // "Tus Anuncios": the state column (Activo/Expirado/Vendido) never appears
+  // in the market. Button labels ("Cancelar") are not always read on short pages.
+  const stateWords=words.filter(w=>/^(activo|expirado|vendido)$/.test(normalized(w.text))).length;
+  if(stateWords>=1&&(/cancelar|tomar|cobrar|no reclamado/.test(all)||stateWords>=2)){
     const ownListings=[];
     // A detail popup occludes the table: do not mix its fields with listings.
-    if(!/pokemon datos|iv ataque|naturaleza:/.test(all))for(let i=0;i<10;i++){
+    if(isPanel&&!/pokemon datos|iv ataque|naturaleza:/.test(all))for(let i=0;i<10;i++){
       const y=.187+i*.0415;
       const row=fieldWords(words,0,1.02,y-.017,y+.017);
       const name=join(fieldWords(row,.11,.35,0,1));
@@ -169,7 +217,7 @@ function parseScreen(data,width,height,options={}) {
     }
     return {...base,ownListings,rows:[],partialRows:[],layout:null};
   }
-  if(!gtl||advanced)return {...base,rows:[],partialRows:[],layout:null};
+  if(!gtl||advanced)return {...base,filters:advanced&&isPanel?parseFilters(words):null,rows:[],partialRows:[],layout:null};
   const rows=[],partialRows=[];
   const cfg=isPanel?{
     name:[.078,.292],nature:[.292,.356],price:[.557,.675],
@@ -313,7 +361,7 @@ async function createRecognizer(){
       }
     }finally{await worker.setParameters({tessedit_pageseg_mode:PSM.SPARSE_TEXT});}
     return out;
-  },async readDigits(images){
+  },async readDigits(images,{max=31}={}){
     const out=[];
     if(!images.length)return out;
     await worker.setParameters({tessedit_pageseg_mode:PSM.SINGLE_LINE,tessedit_char_whitelist:'0123456789'});
@@ -321,8 +369,8 @@ async function createRecognizer(){
       for(const png of images){
         const r=await worker.recognize(png);
         const text=String(r.data.text||'').replace(/\D/g,'');
-        const v=/^\d{1,2}$/.test(text)&&Number(r.data.confidence||0)>=60?Number(text):null;
-        out.push(v!==null&&v<=31?v:null);
+        const v=/^\d{1,3}$/.test(text)&&Number(r.data.confidence||0)>=60?Number(text):null;
+        out.push(v!==null&&v<=max?v:null);
       }
     }finally{
       await worker.setParameters({tessedit_pageseg_mode:PSM.SPARSE_TEXT,tessedit_char_whitelist:''});
@@ -330,4 +378,4 @@ async function createRecognizer(){
     return out;
   },close:()=>worker.terminate()};
 }
-module.exports={fuzzyNature,parseNameCell,parseScreen,parseMoney,parseBalanceText,flattenWords,cleanWords,createRecognizer,normalized,overlayLayout,isGtlHeader};
+module.exports={parseFilters,filterField,fuzzyNature,parseNameCell,parseScreen,parseMoney,parseBalanceText,flattenWords,cleanWords,createRecognizer,normalized,overlayLayout,isGtlHeader};

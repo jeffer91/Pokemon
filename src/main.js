@@ -36,7 +36,14 @@ let headerHash='',tableHash='',lastHeaderCheckedAt=0,lastTableCheckedAt=0,lastBa
 let lastDisplayedRows=null,lastDisplayedLayout=null,lastPageSignature='',lastMarketImage=null;
 let marketCache=null,marketCacheAt=0;
 // 'hunt' = buscar gangas; 'learn' = misiones guiadas para llenar precios.
-let sessionKind='hunt',learner=null,lastPageFrom=null;
+let sessionKind='hunt',learner=null,lastPageFrom=null,lastMarketKey='';
+// Live reading counter shown on the overlay: phase, start time, expected time.
+let readPhase={phase:'idle',since:0},readAvgMs=null,lastReadAt=0,lastReadRows=0;
+function progress(phase){
+  if(readPhase.phase===phase&&phase!=='leyendo')return;
+  readPhase={phase,since:Date.now()};
+  broadcast('radar:progress',{phase,since:readPhase.since,expectMs:readAvgMs,lastReadAt,lastReadRows,kind:sessionKind});
+}
 const NEXT_KEY='Control+Alt+Right';
 function learnView(){return sessionKind==='learn'&&learner?learner.view():null;}
 function nextMission(){
@@ -48,6 +55,39 @@ function nextMission(){
   if(lastDisplayedRows)void showResults(lastDisplayedRows,sessionVersion,lastDisplayedLayout);
   else void showCompact();
   return view;
+}
+// Rows seen recently: a balance drop equal to one of their prices = a purchase.
+const recentSeen=[];
+const nearBargains=new Map();
+function rememberSeen(rows,decisions){
+  const now=Date.now();
+  for(const r of rows){
+    if(!Number.isSafeInteger(r.price)||!r.species)continue;
+    const d=decisions.find(x=>x.rank===r.rank);
+    recentSeen.push({...r,seenAt:now,score:d?.score??null});
+  }
+  while(recentSeen.length&&(recentSeen.length>400||now-recentSeen[0].seenAt>20*60_000))recentSeen.shift();
+}
+function detectPurchase(previous,balance){
+  if(!Number.isSafeInteger(previous)||!Number.isSafeInteger(balance)||balance>=previous)return null;
+  const drop=previous-balance;
+  const match=[...recentSeen].reverse().find(r=>r.price===drop&&!r.bought);
+  if(!match)return null;
+  for(const r of recentSeen)if(r.species===match.species&&r.price===match.price)r.bought=true;
+  storage.recordPurchase(match,{score:match.score});
+  return match;
+}
+// Closest listings to a buy in this session, with the reason they miss.
+function trackNear(decisions){
+  const now=Date.now();
+  for(const d of decisions){
+    if(!Number.isFinite(d.score)||d.decision==='COMPRAR'||d.learn)continue;
+    const key=[d.species,d.level,d.nature,d.price,(d.ivs||[]).join(',')].join('|');
+    nearBargains.set(key,{species:d.species,level:d.level,price:d.price,score:d.score,
+      netEstimate:d.netEstimate??null,reasonText:d.reasonText,seenAt:now});
+  }
+  for(const [k,v] of nearBargains)if(now-v.seenAt>30*60_000)nearBargains.delete(k);
+  return [...nearBargains.values()].sort((a,b)=>b.score-a.score).slice(0,5);
 }
 function publishLearn(){
   setStatus({kind:sessionKind,learn:learnView(),missions:sessionKind==='learn'&&learner?learner.list():[]});
@@ -120,7 +160,7 @@ async function showCompact(label='Radar'){
   const version=sessionVersion;
   const mission=learnView();
   broadcast('radar:overlay',{mode:'compact',label,mission});
-  const width=mission?300:110,height=mission?132:32;
+  const width=mission?300:200,height=mission?176:40;
   const bounds=overlay.getBounds();
   if(!overlay.isVisible() || bounds.width!==width || bounds.height!==height)
     place({...compactFallback(),x:compactFallback().x-(width-110),width,height});
@@ -154,7 +194,8 @@ async function showResults(rows,version,layout=null){
     Math.round(game.y+game.height*(auto?.firstRowTopNorm||.311));
   const work=screen.getDisplayMatching(game).workArea;
   // In learn mode a mission card sits right above the first row.
-  const mission=learnView(),card=mission?126:0;
+  // Learn: mission card with filters and counter. Hunt: a thin counter strip.
+  const mission=learnView(),card=mission?176:38;
   const bounds={
     x:Math.max(work.x,Math.min(work.x+work.width-width,x)),
     y:Math.max(work.y,Math.min(work.y+work.height-(10*step+10+card),y-card)),
@@ -253,7 +294,7 @@ async function tick(){
         track('capture','warn',capture.code||'CAP-WAIT',capture.detail||'Esperando pantalla visible');
         track('gtl','pending','GTL-000','Esperando el mercado');
         setStatus({state:'esperando',message:'Esperando el GTL visible',recognized:0});
-        await showCompact('En espera');return;
+        progress('esperando');await showCompact('En espera');return;
       }
       const code=capture?.code||'CAP-UNKNOWN';
       track('window',capture?.windowFound?'ok':'warn',
@@ -272,7 +313,7 @@ async function tick(){
       diagnostics?.markOcrStale();
       track('capture','error',health.reason,'Captura vacía o sin imagen útil');
       setStatus({state:'error',message:'No se recibió una imagen válida del juego.',recognized:0});
-      await showCompact('Sin imagen');return;
+      progress('esperando');await showCompact('Sin imagen');return;
     }
     track('capture','ok',capture.code,
       size.width+' × '+size.height+' píxeles · '+capture.via);
@@ -288,7 +329,7 @@ async function tick(){
       if(Date.now()-startedAt<3500){
         track('gtl','pending','GTL-000','Buscando Servidor de Comercio');
         setStatus({state:'capturada',message:'Pantalla captada · buscando GTL',recognized:0});
-        await showCompact('Captada');return;
+        progress('esperando');await showCompact('Captada');return;
       }
       const header=cropped(image,size.width,size.height,'header');
       const fp=imageHash(header),now=Date.now();
@@ -308,7 +349,7 @@ async function tick(){
       track('gtl','pending','GTL-OCULTO','Pantalla captada; GTL no visible');
       track('ocr','pending','OCR-000','Esperando anuncios');
       setStatus({state:'capturada',message:'Pantalla captada · esperando GTL',recognized:0});
-      await showCompact('Captada');return;
+      progress('esperando');await showCompact('Captada');return;
     }
     const firstVisit=mode!=='gtl';
     mode='gtl';
@@ -316,7 +357,7 @@ async function tick(){
     if(firstVisit){
       tableHash='';lastTableCheckedAt=0;
       setStatus({state:'buscando',message:'GTL detectado. Preparando lectura.',recognized:0});
-      await showCompact('GTL detectado');
+      progress('esperando');await showCompact('GTL detectado');
       return; // Next frame uses the full GTL resolution.
     }
     stage='ocr';
@@ -340,12 +381,17 @@ async function tick(){
     const marketImage=image.crop({x:rect.x,y:rect.y,width:rect.width,height:rect.height});
     const market=marketImage.toPNG();
     const fp=imageHash(market),now=Date.now();
-    const pageChanged=!!lastMarketImage&&materiallyDifferent(lastMarketImage,marketImage);
-    lastMarketImage=marketImage;
+    // Only frames from the same engine and size are comparable: another engine
+    // crops the same page with a different alignment. Otherwise the footer
+    // ("Mostrando X a Y") decides after the OCR.
+    const marketKey=(capture.via||'')+'|'+rect.width+'x'+rect.height;
+    const pageChanged=!!lastMarketImage&&lastMarketKey===marketKey&&
+      materiallyDifferent(lastMarketImage,marketImage);
+    lastMarketImage=marketImage;lastMarketKey=marketKey;
     if(pageChanged){
       diagnostics?.markOcrStale();
       lastDisplayedRows=null;lastPageSignature='';tableHash='';
-      await showCompact('Nueva página');
+      progress('nueva');await showCompact('Nueva página');
     }
     if(!shouldCheckHeader(fp,tableHash,lastTableCheckedAt,now,8000))return;
     tableHash=fp;lastTableCheckedAt=now;
@@ -359,11 +405,15 @@ async function tick(){
       const scaledBalance=balanceCrop.resize({
         width:Math.max(480,balanceCrop.getSize().width*2),quality:'best'});
       const balance=await recognizer.readBalance(scaledBalance.toPNG());
+      const bought=detectPurchase(storage.latestBalance(),balance);
+      if(bought)setStatus({message:'Compra registrada: '+bought.species+' por '+bought.price.toLocaleString('es-EC')+' ¥',
+        trades:storage.trades()});
       lastBalanceReadAt=now;
       if(Number.isSafeInteger(balance))storage.recordBalance(balance);
       diagnostics?.setBalance(balance,'HUD OCR ampliado');
     }
     const ocrStart=performance.now();
+    progress('leyendo');
     const enlarged=marketImage.resize({width:rect.width*2,quality:'best'});
     const enlargedSize=enlarged.getSize();
     let res=await recognizer.analyze(enlarged.toPNG(),enlargedSize.width,enlargedSize.height,{
@@ -409,17 +459,38 @@ async function tick(){
     const ocrTime=Math.round(performance.now()-ocrStart);
     if(res.ownListings){
       storage.recordOwnListings(res.ownListings);
+      const linked=storage.linkOwnListings(res.ownListings);
+      if(linked.length)setStatus({trades:storage.trades()});
       lastDisplayedRows=null;lastPageSignature='';
-      await showCompact('Mis anuncios');
+      progress('anuncios');await showCompact('Mis anuncios');
       publishData(true);
       setStatus({state:'activo',message:res.ownListings.length+' anuncios propios leídos',recognized:res.ownListings.length});
       return;
     }
     if(res.advanced){
       diagnostics?.markOcrStale();
+      if(sessionKind==='learn'&&learner&&res.filters){
+        // Re-read the value cells the mission needs when the big pass missed them.
+        const m=learner.current(),values={...res.filters.values};
+        const wanted=m?[...m.ivs.map(i=>'ivMin'+i),...(m.level1?['levelMax']:[]),...(m.total31?['matches']:[])]
+          .filter(k=>!(k in values)&&res.filters.cells[k]):[];
+        if(wanted.length&&panel){
+          const kx=enlargedSize.width/rect.width,ky=enlargedSize.height/rect.height;
+          const rects=wanted.map(k=>{
+            const c=res.filters.cells[k],x0=panel.x+c.x[0]*panel.width,x1=panel.x+c.x[1]*panel.width;
+            const y0=panel.y+(c.y-.014)*panel.width;
+            return {x:Math.max(0,Math.round((x0-rect.x)*kx)),y:Math.max(0,Math.round((y0-rect.y)*ky)),
+              width:Math.round((x1-x0)*kx),height:Math.round(.028*panel.width*ky)};
+          }).map(r=>({...r,width:Math.min(r.width,enlargedSize.width-r.x),height:Math.min(r.height,enlargedSize.height-r.y)}));
+          const read=await recognizer.readDigits(rects.map(r=>cellPng(enlarged,r,40)),{max:100});
+          wanted.forEach((k,i)=>{if(Number.isInteger(read[i]))values[k]=read[i];});
+        }
+        learner.setFilters(values);
+        publishLearn();
+      }
       track('ocr','pending','OCR-FILTROS','Búsqueda avanzada abierta',ocrTime);
       setStatus({state:'investigando',message:'GTL detectado · ajustando filtros',recognized:0,latency:ocrTime});
-      await showCompact('Filtros GTL');return;
+      progress('filtros');await showCompact('Filtros GTL');return;
     }
     const inferred=panel&&res.grid?inferGtlSexes(image,panel,res.grid):null;
     const enrichSex=row=>{
@@ -453,7 +524,7 @@ async function tick(){
     stage='engine';
     const decisions=[];
     const options=brainOptions();
-    const sampleCache=new Map();
+    const sampleCache=new Map(),salesCache=new Map();
     const samplesFor=species=>{
       const k=String(species||'').toLowerCase();
       if(!sampleCache.has(k))sampleCache.set(k,storage.marketSamples(species));
@@ -462,7 +533,8 @@ async function tick(){
     const pick=row=>({rank:row.rank,species:row.species,price:row.price,
       level:row.level,nature:row.nature,ivs:row.ivs});
     for(const row of rows){
-      const ev=assess({...row,fingerprint:identity(row)},samplesFor(row.species),options);
+      const ev=assess({...row,fingerprint:identity(row)},samplesFor(row.species),
+        {...options,sales:salesCache.get(row.species)??salesCache.set(row.species,storage.salesFor(row.species)).get(row.species)});
       decisions.push({...pick(row),...ev});
     }
     // Incomplete rows stay pending, except for clear budget exclusions.
@@ -506,7 +578,7 @@ async function tick(){
       if(!freshPanel){
         diagnostics?.markOcrStale();
         lastPageSignature='';lastDisplayedRows=null;
-        await showCompact('GTL oculto');
+        progress('esperando');await showCompact('GTL oculto');
         return;
       }
       const freshRect={
@@ -517,11 +589,12 @@ async function tick(){
       };
       if(freshRect.height<=0)return;
       const freshMarket=fresh.image.crop(freshRect);
-      if(materiallyDifferent(marketImage,freshMarket)){
+      const sameSource=(fresh.via||'')===(capture.via||'')&&freshRect.width===rect.width&&freshRect.height===rect.height;
+      if(sameSource&&materiallyDifferent(marketImage,freshMarket)){
         diagnostics?.markOcrStale();
         tableHash='';lastTableCheckedAt=0;
         lastPageSignature='';lastDisplayedRows=null;
-        await showCompact('Nueva página');
+        progress('nueva');await showCompact('Nueva página');
         setStatus({state:'buscando',message:'La página cambió; leyendo nuevas ofertas.',recognized:0});
         return;
       }
@@ -551,11 +624,17 @@ async function tick(){
       for(const rank of [...current.keys()])if(!existing.has(rank))current.delete(rank);
       await showResults([...current.values()].sort((a,b)=>a.rank-b.rank),version,res.layout||lastDisplayedLayout);
     }
+    rememberSeen([...rows,...partials],decisions);
+    const near=sessionKind==='hunt'?trackNear(decisions):[];
+    const readMs=Math.round(performance.now()-ocrStart);
+    readAvgMs=readAvgMs===null?readMs:Math.round(readAvgMs*.7+readMs*.3);
+    lastReadAt=Date.now();lastReadRows=rows.length+partials.length;
+    readPhase.phase='';progress('listo');
     setStatus({state:'activo',
       message:rows.length+'/10 leídos · '+saved.saved+' guardados'+
         (sessionKind==='learn'?' · aprendiendo':bargains.length?' · ¡'+bargains.length+' ganga'+(bargains.length>1?'s':'')+'!':
           actionable?' · '+actionable+' decisiones':' · recopilando precios'),
-      recognized:rows.length,latency:Math.round(performance.now()-start)});
+      recognized:rows.length,latency:Math.round(performance.now()-start),near,trades:storage.trades()});
   }catch(error){
     if(!sessionActive||version!==sessionVersion)return;
     const name=stage==='database'?'DB-001':stage==='ocr'?'OCR-002':

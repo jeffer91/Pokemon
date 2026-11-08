@@ -18,6 +18,31 @@ function navigate(tab){
   for(const page of document.querySelectorAll('[data-page]'))page.hidden=page.dataset.page!==tab;
 }
 for(const tab of document.querySelectorAll('[data-tab]'))tab.addEventListener('click',()=>navigate(tab.dataset.tab));
+function fillTable(id,rows,cols,empty){
+  const body=$(id);if(!rows)return;
+  body.replaceChildren();
+  for(const r of rows){
+    const tr=document.createElement('tr');
+    for(const v of cols(r)){const td=document.createElement('td');td.textContent=v;tr.append(td);}
+    body.append(tr);
+  }
+  if(!rows.length){const tr=document.createElement('tr'),td=document.createElement('td');
+    td.colSpan=$(id).closest('table').querySelectorAll('th').length;td.textContent=empty;tr.append(td);body.append(tr);}
+}
+const STATE_LABEL={comprado:'Comprado',en_venta:'En venta',vendido:'Vendido',expirado:'Expiró sin venderse'};
+function renderTrades(s){
+  if(s.near)fillTable('near',s.near,r=>[r.species+(r.level?' · Nv. '+r.level:''),currency(r.price),
+    r.score.toFixed(1)+'/10',Number.isFinite(r.netEstimate)?currency(r.netEstimate):'—',r.reasonText||'—'],
+    'Nada cercano todavía: el cerebro necesita más precios de cada clase.');
+  if(s.trades){
+    fillTable('trades',s.trades,t=>[t.species+(t.level?' · Nv. '+t.level:''),currency(t.buy_price),
+      t.listed_price?currency(t.listed_price):'—',STATE_LABEL[t.state]||t.state,
+      Number.isFinite(t.net)?currency(t.net):'—',t.days!==null&&t.days!==undefined?String(t.days):'—'],'Aún no hay compras registradas.');
+    const closed=s.trades.filter(t=>Number.isFinite(t.net));
+    if(closed.length)$('trades-summary').textContent=closed.length+' cerradas · ganancia total '+
+      currency(closed.reduce((a,t)=>a+t.net,0))+' · '+closed.filter(t=>t.state==='vendido').length+' vendidas';
+  }
+}
 function renderLearn(s){
   const m=s.learn,box=$('learn-current');
   $('next-mission').disabled=!(m&&!m.done);
@@ -29,7 +54,10 @@ function renderLearn(s){
     const title=document.createElement('b');title.textContent='Busca '+m.species+(m.level1?' (nivel 1)':'');
     const filters=document.createElement('div');filters.textContent='Filtros: '+m.filters.join(' · ');
     const sort=document.createElement('div');sort.textContent='Orden: '+m.sort+' · base de '+m.target;
-    box.append(title,filters,sort);
+    const check=document.createElement('div');
+    check.textContent=m.filterCheck?'Tus filtros: '+(m.filterCheck.ok===true?'✓ ':m.filterCheck.ok===false?'✗ ':'')+m.filterCheck.text:
+      'Tus filtros: abre Búsqueda Avanzada en el juego y la app los revisa';
+    box.append(title,filters,sort,check);
   }
   const body=$('missions');body.replaceChildren();
   for(const x of s.missions||[]){
@@ -46,7 +74,7 @@ function renderStatus(s){
   const learning=running&&s.kind==='learn';
   $('play').disabled=running&&!learning;$('learn').disabled=learning;$('stop').disabled=!running;
   $('play').classList.toggle('running',running&&!learning);$('learn').classList.toggle('running',learning);
-  renderLearn(s);
+  renderLearn(s);renderTrades(s);
   const badge=$('status-badge');
   badge.textContent=running?(s.state==='activo'?'GTL ACTIVO':s.state==='capturada'?'PANTALLA CAPTADA':s.state==='error'?'REVISAR':'EN ESPERA'):'DETENIDO';
   badge.className='state'+(running?' on':'')+(s.state==='error'?' bad':'');

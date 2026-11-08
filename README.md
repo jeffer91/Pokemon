@@ -1,4 +1,4 @@
-# PokéRadar GTL — v0.11.0
+# PokéRadar GTL — v0.12.0
 
 Aplicación de escritorio Electron para Windows 11. **Play** inicia una sesión de lectura visual del GTL, sin formularios de cuota ni posiciones X/Y, y muestra un pequeño radar flotante. No realiza compras ni controla el cliente del juego.
 
@@ -258,3 +258,29 @@ Nota: la alineación de las etiquetas flotantes depende de la geometría detecta
 **Mantenimiento.** Lista de naturalezas centralizada en `market.js`; la consulta de Tus Anuncios hace una sola consulta en lugar de una por anuncio.
 
 **Pendiente:** el sexo aún no influye en el puntaje.
+
+## v0.12.0 — Cazar gangas estable, filtros verificados, contador y compras
+
+**Cazar gangas volvía a borrar sus etiquetas.**
+- La app alternaba motores de captura (los rápidos fallaban y PrintWindow funcionaba). Dos motores recortan la misma página con distinta alineación, y el detector lo tomaba por un cambio de página: «Nueva página» y sin etiquetas.
+- Ahora la app se queda con el motor que funcionó y solo revisa los demás cada 60 s.
+- Para detectar el cambio de página solo compara imágenes del mismo motor y tamaño; si no, decide el pie «Mostrando X a Y».
+
+**Lectura.**
+- Un IV pintado de **rojo es 0** (medido ≈ rgb(253,101,101)), igual que el verde es 31.
+- **Tus Anuncios** se reconoce por la columna Estado (Activo/Expirado/Vendido), también en páginas cortas donde «Cancelar» no se lee. Nunca se trata como mercado.
+
+**Verificación de filtros (Aprender).**
+- Al abrir Búsqueda Avanzada, la app lee Naturaleza, Nivel Min/Max, IV Min/Max y Coincidencias de IV, y los compara con la misión.
+- Ejemplos: «✓ Filtros correctos», «✗ Nivel Max debe ser 1», «✗ Quita IV Velocidad Min 31».
+- El formulario tiene desplazamiento: se combina lo que muestra cada pantalla.
+
+**Contador en vivo** en la tarjeta de misión y en una franja sobre las etiquetas de caza: «Leyendo página… 1,4 s de ~2,8 s» con barra, «Leído hace 3 s · 10/10 filas», «Esperando el GTL», «Revisando tus filtros». El tiempo estimado es el promedio de las últimas lecturas en tu PC.
+
+**Casi gangas** (pestaña Radar): las 5 lecturas más cercanas a COMPRAR de los últimos 30 min, con el motivo por el que no llegan.
+
+**Mis compras** (pestaña Radar), ciclo compra → venta:
+1. **Compra:** cuando el saldo baja exactamente el precio de un anuncio visto en los últimos 20 min, se registra la compra con especie, nivel, IVs, precio y puntaje.
+2. **En venta:** al abrir Tus Anuncios, el anuncio de esa especie y nivel se enlaza con la compra.
+3. **Vendido:** ganancia real = venta − compra − 1.000, y días en venta. **Expirado:** −1.000.
+4. Tus **ventas reales** reemplazan a los precios pedidos en la estimación de reventa del cerebro (2 o más ventas de la misma clase = mediana de ventas).

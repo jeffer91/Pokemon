@@ -74,7 +74,7 @@ function dealScore(net){
 function tier(net){return net>=10000?'excelente':net>=5000?'muy buena':net>=1000?'buena':'baja';}
 const money=n=>Math.round(n).toLocaleString('es-ES');
 
-function assess(listing,samples=[],{profiles=[],balance=null,fee=null,pendingSpend=0,now=Date.now()}={}){
+function assess(listing,samples=[],{profiles=[],balance=null,fee=null,pendingSpend=0,now=Date.now(),sales=[]}={}){
   const listingFee=Number.isSafeInteger(fee)&&fee>=0?fee:DEFAULT_FEE;
   const silent=(reason,reasonText,extra={})=>({decision:'SILENCIO',reason,reasonText,score:null,
     scoreKind:'GANGA',confidence:0,feeEstimate:listingFee,...extra});
@@ -112,9 +112,13 @@ function assess(listing,samples=[],{profiles=[],balance=null,fee=null,pendingSpe
     return out;
   }
   // Listing at the cheap end of the class is what sells; use the 25th percentile.
-  const resale=percentile(peers.map(p=>p.price),.25);
+  // Your own confirmed sales of the same class beat asking prices.
+  const sold=(sales||[]).filter(x=>Number.isSafeInteger(x.price)&&x.ivs&&classKeys(x,profiles).exact===exact).map(x=>x.price);
+  const asking=percentile(peers.map(p=>p.price),.25);
+  const resale=sold.length>=2?percentile(sold,.5):sold.length===1?Math.round((sold[0]+asking)/2):asking;
+  if(sold.length)scope='ventas reales ('+sold.length+')';
   const net=resale-listing.price-listingFee;
-  const confidence=round1(factor*Math.min(1,.6+.08*peers.length));
+  const confidence=sold.length>=2?1:round1(factor*Math.min(1,.6+.08*peers.length));
   const deal=dealScore(net)*confidence;
   const score=round1(Math.min(10,quality+deal));
   const result={...base,score,resale,priceReference:resale,netEstimate:net,confidence,scope,

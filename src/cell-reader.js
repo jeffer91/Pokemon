@@ -15,6 +15,8 @@ function px(bitmap,width,x,y){
   return {b:bitmap[k],g:bitmap[k+1],r:bitmap[k+2],a:bitmap[k+3]};
 }
 const isGreen=p=>p.g>=130&&p.g-p.r>=45&&p.g-p.b>=30;
+// PokéMMO paints a 0 in red (measured ≈ rgb(253,101,101)), like 31 in green.
+const isRed=p=>p.r>=180&&p.r-p.g>=80&&p.r-p.b>=80;
 const isWhite=p=>p.r>=160&&p.g>=160&&p.b>=160&&
   Math.max(p.r,p.g,p.b)-Math.min(p.r,p.g,p.b)<=50;
 
@@ -58,15 +60,16 @@ function glyphsFrom(mask,w,h){
 
 function classifyCell(bitmap,width,height,rect){
   const r=clampRect(rect,width,height);
-  if(!r)return {green:0,white:0,area:0,glyphs:[]};
-  let green=0,white=0;
+  if(!r)return {green:0,red:0,white:0,area:0,glyphs:[]};
+  let green=0,red=0,white=0;
   const mask=new Uint8Array(r.width*r.height);
   for(let y=0;y<r.height;y++)for(let x=0;x<r.width;x++){
     const p=px(bitmap,width,r.x+x,r.y+y);
     if(isGreen(p))green++;
+    else if(isRed(p))red++;
     else if(isWhite(p)){white++;mask[y*r.width+x]=1;}
   }
-  return {green,white,area:r.width*r.height,glyphs:white>=8?glyphsFrom(mask,r.width,r.height):[]};
+  return {green,red,white,area:r.width*r.height,glyphs:white>=8?glyphsFrom(mask,r.width,r.height):[]};
 }
 function textThreshold(area){return Math.max(10,Math.round(area*.015));}
 
@@ -204,7 +207,8 @@ function refineScan(parsed,img,book=createDigitBook()){
     const c=classifyCell(img.bitmap,img.width,img.height,rect);
     const thr=textThreshold(c.area);
     c.isGreen=c.green>=thr&&c.green>=c.white*.6;
-    c.hasText=c.isGreen||c.white>=thr;
+    c.isRed=!c.isGreen&&c.red>=thr&&c.red>=c.white*.6;
+    c.hasText=c.isGreen||c.isRed||c.white>=thr;
     c.rect=rect;
     if(c.isGreen)anyGreen=true;
     info.set(e.rank+':'+j,c);
@@ -214,6 +218,10 @@ function refineScan(parsed,img,book=createDigitBook()){
     const c=info.get(e.rank+':'+j),v=e.ivs[j],conf=e.ivConf?.[j]??0;
     if(c.isGreen){
       if(v!==31){if(v!==null)stats.corrected++;else stats.color++;e.ivs[j]=31;e.ivSources[j]='color';}
+      continue;
+    }
+    if(c.isRed){
+      if(v!==0){if(v!==null)stats.corrected++;else stats.color++;e.ivs[j]=0;e.ivSources[j]='color';}
       continue;
     }
     if(v!==null&&v!==31&&conf>=85&&c.hasText&&book.learn(v,c.glyphs))stats.learned++;

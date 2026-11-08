@@ -26,7 +26,7 @@ function createGameCapture({desktopCapturer,screen,locateWindow,inspectThumbnail
   const order=Object.keys(ENGINE_LABELS);
   const records=new Map(order.map(id=>[id,{id,name:ENGINE_LABELS[id],state:'pending',
     code:'PENDIENTE',detail:'Sin probar',ms:null,frames:0,gtl:false,at:null}]));
-  let selected=null,lastRect=null,lastDebug=null,lastProbe=0,busy=null,visualDisplayId=null;
+  let selected=null,lastRect=null,lastDebug=null,lastProbe=0,busy=null,visualDisplayId=null,lastFastRecheck=0;
   const cooldown=new Map();
   let missSince=0,lastNativeFallbackAt=0;
   function health(image){
@@ -225,11 +225,14 @@ function createGameCapture({desktopCapturer,screen,locateWindow,inspectThumbnail
     // GDI captures independently of Electron/title; PrintWindow is last
     // because some GPU renderers return an empty frame.
     const backup=['win-gdi','win-print'];
-    // A slow PowerShell engine never goes before the fast ones: it is only a
-    // fallback, even if an earlier session stored it as the preferred engine.
-    const preferredFast=selected&&fast.includes(selected)?selected:null;
-    const tries=[...(preferredFast?[preferredFast]:[]),...fast.filter(id=>id!==preferredFast),
-      ...(selected&&backup.includes(selected)?[selected]:[]),...backup.filter(id=>id!==selected)];
+    // Stick to the engine that last produced a GTL frame. Alternating engines
+    // gives differently aligned crops of the same page, which looked like page
+    // turns and erased every label. A slow selected engine yields to the fast
+    // ones only for a periodic re-check (every 60 s).
+    const recheck=selected&&backup.includes(selected)&&now()-lastFastRecheck>60000;
+    if(recheck)lastFastRecheck=now();
+    const tries=selected&&!recheck?[selected,...fast.filter(id=>id!==selected),...backup.filter(id=>id!==selected)]:
+      [...fast,...(selected&&backup.includes(selected)?[selected]:[]),...backup.filter(id=>id!==selected)];
     let errors=[],allowedNative=false;
     // Avoid invoking a multi-second PowerShell process on each idle frame.
     // Manual tests still exercise every engine independently.

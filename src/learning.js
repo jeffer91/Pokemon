@@ -65,6 +65,41 @@ function judge(row,m){
     return {state:'reading',text:'Leyendo precio…'};
   return {state:'ok',text:'Precio guardado'};
 }
+// Compare the Advanced Search form the player filled with the mission.
+// values: parsed form ({nature, levelMin, levelMax, ivMin0..5, matches}); a
+// missing key means "not read yet" (null = the field shows "--").
+function checkFilters(values,m){
+  if(!m||!values)return null;
+  const items=[];
+  const has=k=>Object.prototype.hasOwnProperty.call(values,k);
+  if(m.nature){
+    if(!has('nature'))items.push({ok:null,text:'Naturaleza sin leer'});
+    else if(normalizedNature(values.nature||'')===normalizedNature(m.nature))items.push({ok:true,text:m.nature});
+    else items.push({ok:false,text:'Naturaleza debe ser '+m.nature});
+  }
+  for(const i of m.ivs){
+    const k='ivMin'+i;
+    if(!has(k))items.push({ok:null,text:IV_NAMES[i]+' sin leer'});
+    else if(values[k]===31)items.push({ok:true,text:IV_NAMES[i]+' 31'});
+    else items.push({ok:false,text:'IV '+IV_NAMES[i]+' Min debe ser 31'});
+  }
+  if(m.level1){
+    if(!has('levelMax'))items.push({ok:null,text:'Nivel Max sin leer'});
+    else if(values.levelMax===1)items.push({ok:true,text:'Nivel 1'});
+    else items.push({ok:false,text:'Nivel Max debe ser 1'});
+  }
+  if(m.total31){
+    if(!has('matches'))items.push({ok:null,text:'Coincidencias sin leer'});
+    else if(values.matches===m.total31)items.push({ok:true,text:m.total31+' coincidencias'});
+    else items.push({ok:false,text:'Coincidencias de IV mínimas: '+m.total31});
+  }
+  // A 31 required where the mission does not ask for it hides cheaper ads.
+  for(let i=0;i<6;i++)if(values['ivMin'+i]===31&&!m.ivs.includes(i)&&!m.total31)
+    items.push({ok:false,text:'Quita IV '+IV_NAMES[i]+' Min 31'});
+  const bad=items.filter(x=>x.ok===false);
+  return {ok:bad.length?false:items.some(x=>x.ok===null)?null:true,items,
+    text:bad.length?bad.map(x=>x.text).join(' · '):items.every(x=>x.ok)?'Filtros correctos':'Revisando filtros…'};
+}
 function matchesMission(row,m){return judge(row,m).state==='ok';}
 // One ad = species + level + nature + price + the IVs the mission needs.
 // Works for complete and partial reads, so the same ad never counts twice.
@@ -83,7 +118,7 @@ function createLearner({profiles,samplesFor,skipped=[]}={}){
   const skip=new Set(skipped);
   const exhausted=new Set();
   const seen=new Map();   // mission id → ad keys counted from partial reads
-  let current=null;
+  let current=null,filterValues=null;
   const cache=new Map();
   const samples=species=>{
     const k=speciesKey(species);
@@ -95,13 +130,14 @@ function createLearner({profiles,samplesFor,skipped=[]}={}){
   function open(){
     return missions.filter(m=>!skip.has(m.id)&&!finished(m)).sort((a,b)=>a.priority-b.priority);
   }
-  function pick(){current=open()[0]||null;return current;}
+  function pick(){current=open()[0]||null;filterValues=null;return current;}
   function view(){
     const completed=missions.filter(finished).length;
     if(!current)return {done:true,total:missions.length,completed};
     return {done:false,id:current.id,species:current.species,nature:current.nature,
       filters:current.filters,sort:current.sort,target:current.target,level1:current.level1,
       got:progress(current),goal:GOAL,completed,total:missions.length,
+      filterCheck:checkFilters(filterValues,current),
       text:'Busca '+current.species+(current.level1?' (nivel 1)':'')+' · '+current.filters.join(' · ')};
   }
   // Labels for the overlay: one per visible row, learning only.
@@ -133,7 +169,9 @@ function createLearner({profiles,samplesFor,skipped=[]}={}){
       filters:m.filters,got:progress(m),goal:GOAL,target:m.target}));
   }
   pick();
-  return {view,observe,labels,next,list,invalidate:()=>cache.clear(),current:()=>current,skipped:()=>[...skip]};
+  // The form scrolls: merge what each screen shows, newest values win.
+  function setFilters(values){if(current&&values)filterValues={...(filterValues||{}),...values};}
+  return {view,observe,labels,next,list,setFilters,invalidate:()=>cache.clear(),current:()=>current,skipped:()=>[...skip]};
 }
 
-module.exports={buildMissions,createLearner,judge,matchesMission,progressOf,adKey,GOAL,IV_FIELDS};
+module.exports={checkFilters,buildMissions,createLearner,judge,matchesMission,progressOf,adKey,GOAL,IV_FIELDS};

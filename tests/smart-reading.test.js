@@ -124,3 +124,14 @@ test('the footer marks empty rows and the last page',()=>{
   assert.equal(rows[1].state,'missing');
   assert.equal(rows[2].state,'empty');
 });
+
+test('a red cell is a 0, like a green cell is a 31',()=>{
+  const b=canvas();
+  const paint=(text,cx,cy,rgb)=>{draw(b,text,cx,cy);
+    for(let i=0;i<W*H;i++)if(b[i*4]===235&&b[i*4+1]===235&&b[i*4+2]===235){b[i*4]=rgb[2];b[i*4+1]=rgb[1];b[i*4+2]=rgb[0];}};
+  [12,25,7,30,14,3].forEach((v,j)=>draw(b,String(v),...at(1,j)));
+  paint('0',...at(1,0),[253,101,101]);
+  const parsed={rows:[],partialRows:[{...row(1,[null,25,7,30,14,3]),priceReliable:true,missingFields:['IV_PS']}],cells};
+  const {parsed:out}=refineScan(parsed,{bitmap:b,width:W,height:H},createDigitBook());
+  assert.equal(out.rows[0].ivs[0],0);
+});

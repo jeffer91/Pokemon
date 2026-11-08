@@ -18,6 +18,39 @@ function alertBargain(){
     }
   }catch{}
 }
+// Live reading counter: phase + elapsed vs expected time, refreshed locally.
+let live={phase:'idle',since:0,expectMs:null,lastReadAt:0,lastReadRows:0};
+window.radar.on('radar:progress',p=>{live={...live,...p};renderLive();});
+const secs=ms=>(ms/1000).toFixed(1).replace('.',',');
+function liveText(){
+  const now=Date.now();
+  if(live.phase==='leyendo'){
+    const el=now-live.since,ex=live.expectMs;
+    return {text:'Leyendo página… '+secs(el)+' s'+(ex?' de ~'+secs(ex)+' s':''),
+      pct:ex?Math.min(100,100*el/ex):Math.min(90,el/60)};
+  }
+  const ago=live.lastReadAt?Math.max(0,Math.round((now-live.lastReadAt)/1000)):null;
+  const tail=ago===null?'':' · leído hace '+ago+' s';
+  const t={listo:'Leído hace '+(ago??0)+' s · '+live.lastReadRows+'/10 filas',
+    esperando:'Esperando el GTL',nueva:'Página nueva · leyendo pronto',
+    filtros:'Revisando tus filtros',anuncios:'Tus Anuncios (no se analiza)'}[live.phase];
+  return {text:t?(live.phase==='listo'?t:t+tail):'Radar activo',pct:live.phase==='listo'?100:0};
+}
+function renderLive(){
+  const {text,pct}=liveText();
+  for(const el of document.querySelectorAll('.live-status')){
+    el.querySelector('span').textContent=text;
+    el.querySelector('i').style.width=pct+'%';
+    el.classList.toggle('reading',live.phase==='leyendo');
+  }
+}
+setInterval(renderLive,250);
+function liveStrip(){
+  const box=document.createElement('div');box.className='live-status';
+  const span=document.createElement('span');const bar=document.createElement('b');const fill=document.createElement('i');
+  bar.append(fill);box.append(span,bar);
+  return box;
+}
 // Mission card for "Aprender precios": what to type in Búsqueda Avanzada.
 function missionCard(m){
   const box=document.createElement('div');box.className='mission';
@@ -32,12 +65,17 @@ function missionCard(m){
   if(!m.done){
     const filters=document.createElement('div');filters.className='mission-filters';
     filters.textContent=(m.filters||[]).filter(f=>f!=='Nivel 1').join(' · ');
+    const check=document.createElement('div');
+    const fc=m.filterCheck;
+    check.className='mission-check '+(fc?.ok===true?'ok':fc?.ok===false?'bad':'');
+    check.textContent=fc?(fc.ok===true?'✓ ':fc.ok===false?'✗ ':'… ')+fc.text:'Abre Búsqueda Avanzada para revisar tus filtros';
     const hint=document.createElement('div');hint.className='mission-hint';
-    hint.textContent='Orden: precio · mira 2–3 págs · Ctrl+Alt+→ saltar';
+    hint.textContent='Ordena por precio · Ctrl+Alt+→ saltar';
     const bar=document.createElement('div');bar.className='mission-bar';
     const fill=document.createElement('i');fill.style.width=Math.round(100*m.got/m.goal)+'%';
-    bar.append(fill);box.append(filters,bar,hint);
+    bar.append(fill);box.append(filters,check,bar,hint);
   }
+  box.append(liveStrip());
   return box;
 }
 window.radar.on('radar:overlay',payload=>{
@@ -46,7 +84,8 @@ window.radar.on('radar:overlay',payload=>{
     const signature='mini|'+label+'|'+JSON.stringify(payload.mission||null);
     if(previous===signature)return;
     previous=signature;root.replaceChildren();root.className='compact';
-    if(payload.mission){root.className='compact with-mission';root.append(missionCard(payload.mission));return;}
+    if(payload.mission){root.className='compact with-mission';root.append(missionCard(payload.mission));renderLive();return;}
+    root.className='compact with-mission';const strip=liveStrip();strip.classList.add('solo');root.append(strip);renderLive();return;
     const box=document.createElement('div');box.className='mini';
     const dot=document.createElement('span');dot.className='dot';
     const text=document.createElement('span');text.textContent=label;
@@ -66,10 +105,13 @@ window.radar.on('radar:overlay',payload=>{
   const signature=JSON.stringify([rows,payload.step,payload.mission||null]);
   if(previous===signature)return;
   previous=signature;root.replaceChildren();root.className='';
-  if(payload.mission){
+  setTimeout(renderLive,0);
+  {
     const holder=document.createElement('div');holder.className='mission-slot';
-    holder.style.height=(payload.card||126)+'px';
-    holder.append(missionCard(payload.mission));root.append(holder);
+    holder.style.height=(payload.card||(payload.mission?176:38))+'px';
+    if(payload.mission)holder.append(missionCard(payload.mission));
+    else{const strip=liveStrip();strip.classList.add('solo');holder.append(strip);}
+    root.append(holder);
   }
   const byRank=new Map(rows.map(row=>[row.rank,row]));
   for(let i=1;i<=10;i++){

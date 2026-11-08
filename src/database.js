@@ -160,6 +160,64 @@ function openDatabase(folder) {
       const now=Date.now();stmt.run(key,row.species,row.level,row.price,row.state,now,now);
     }db.exec('COMMIT');}catch(e){db.exec('ROLLBACK');throw e;}
   }
+  // ---- Buy → list → sell tracking (one row per Pokémon bought) ----
+  db.exec(`CREATE TABLE IF NOT EXISTS trades (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, species TEXT NOT NULL, level INTEGER, nature TEXT,
+    ivs_json TEXT, buy_price INTEGER NOT NULL, bought_at INTEGER NOT NULL, score REAL,
+    listing_key TEXT, listed_price INTEGER, listed_at INTEGER,
+    sold_price INTEGER, closed_at INTEGER, state TEXT NOT NULL DEFAULT 'comprado', net INTEGER)`);
+  const TRADE_FEE=1000;
+  function recordPurchase(row,{score=null,at=Date.now()}={}){
+    if(!row||typeof row.species!=='string'||!Number.isSafeInteger(row.price)||row.price<=0)return null;
+    const r=db.prepare(`INSERT INTO trades(species,level,nature,ivs_json,buy_price,bought_at,score)
+      VALUES(?,?,?,?,?,?,?)`).run(row.species,Number.isInteger(row.level)?row.level:null,row.nature||null,
+      JSON.stringify(row.ivs||null),row.price,at,Number.isFinite(score)?score:null);
+    db.prepare(`INSERT INTO transactions(fingerprint,species,kind,price,fee,occurred_at,note)
+      VALUES(?,?,'BUY',?,0,?,'detectado por saldo')`).run(row.fingerprint||null,row.species,row.price,at);
+    return Number(r.lastInsertRowid);
+  }
+  // Link "Tus Anuncios" rows to open purchases (same species and level) and
+  // close them when the game shows Vendido / Expirado.
+  function linkOwnListings(rows,now=Date.now()){
+    const open=db.prepare(`SELECT * FROM trades WHERE state IN ('comprado','en_venta') ORDER BY bought_at`).all();
+    const used=new Set(open.filter(t=>t.listing_key).map(t=>t.listing_key));
+    const changes=[];
+    for(const row of rows||[]){
+      if(!row||typeof row.species!=='string'||!Number.isSafeInteger(row.price))continue;
+      const key=JSON.stringify([row.species.toLowerCase(),row.level,row.price]);
+      let trade=open.find(t=>t.listing_key===key);
+      if(!trade){
+        trade=open.find(t=>!t.listing_key&&!used.has(key)&&t.species.toLowerCase()===row.species.toLowerCase()&&
+          (t.level===null||t.level===row.level));
+        if(!trade)continue;
+        db.prepare(`UPDATE trades SET listing_key=?,listed_price=?,listed_at=?,state='en_venta' WHERE id=?`)
+          .run(key,row.price,now,trade.id);
+        trade.listing_key=key;used.add(key);changes.push({id:trade.id,state:'en_venta'});
+      }
+      if(row.state==='vendido'&&trade.state!=='vendido'){
+        const net=row.price-trade.buy_price-TRADE_FEE;
+        db.prepare(`UPDATE trades SET sold_price=?,closed_at=?,state='vendido',net=? WHERE id=?`).run(row.price,now,net,trade.id);
+        db.prepare(`INSERT INTO transactions(species,kind,price,fee,occurred_at,note) VALUES(?,'SELL',?,?,?,'Tus Anuncios: vendido')`)
+          .run(trade.species,row.price,TRADE_FEE,now);
+        trade.state='vendido';changes.push({id:trade.id,state:'vendido',net});
+      }else if(row.state==='expirado'&&trade.state==='en_venta'){
+        db.prepare(`UPDATE trades SET closed_at=?,state='expirado',net=? WHERE id=?`).run(now,-TRADE_FEE,trade.id);
+        trade.state='expirado';changes.push({id:trade.id,state:'expirado'});
+      }
+    }
+    return changes;
+  }
+  function trades(limit=30){
+    return db.prepare('SELECT * FROM trades ORDER BY bought_at DESC LIMIT ?').all(limit).map(t=>({...t,
+      ivs:JSON.parse(t.ivs_json||'null'),
+      days:t.closed_at&&t.listed_at?Math.max(0,Math.round((t.closed_at-t.listed_at)/86_400_000*10)/10):null}));
+  }
+  // Real sales are the best resale evidence the brain can get.
+  function salesFor(species){
+    return db.prepare(`SELECT species,level,nature,ivs_json,sold_price price,closed_at FROM trades
+      WHERE state='vendido' AND species=? COLLATE NOCASE ORDER BY closed_at DESC LIMIT 50`).all(String(species||''))
+      .map(r=>({...r,ivs:JSON.parse(r.ivs_json||'null'),lastSeen:r.closed_at,sold:true}));
+  }
   // One grouped query for every species instead of one query per listing.
   const ownListingsQuery=db.prepare(`SELECT o.*,coalesce(s.count,0) confirmed_sales,s.net average_net
     FROM own_listings o LEFT JOIN (SELECT lower(species) sp,count(*) count,avg(price-fee) net
@@ -418,7 +476,7 @@ function openDatabase(folder) {
   async function saveBackup(){const dest=path.join(folder,'backups');fs.mkdirSync(dest,{recursive:true});
     const file=path.join(dest,`pokeradar-${new Date().toISOString().slice(0,10)}.sqlite`);
     if(!fs.existsSync(file)) await backup(db,file);return file;}
-  return {db,filename,recordOwnListings,ownListings,settings:getSettings,applySettings,recordListings,recordMarketScan,candidates,marketSamples,targetPrices,marketIntelligence,catalogProfiles,recordRecommendation,
+  return {db,filename,recordPurchase,linkOwnListings,trades,salesFor,recordOwnListings,ownListings,settings:getSettings,applySettings,recordListings,recordMarketScan,candidates,marketSamples,targetPrices,marketIntelligence,catalogProfiles,recordRecommendation,
     recordBalance,latestBalance,recent,history,stats,summary,addTransaction,transactionHistory,saveBackup,
     competitiveProfiles,projects,createProject,updateProject,close:()=>db.close()};
 }
