@@ -39,7 +39,22 @@ function inspectPixels(bitmap,width,height){
   return {valid,gtl:valid&&(score>=7||panelRatio>=.65),
     score,panelRatio,reason:valid?'OK':'CAP-003'};
 }
+// The same frame is inspected by the capture engine and by the main loop:
+// remember the result per image instead of resizing it again.
+const healthCache=new WeakMap(),panelCache=new WeakMap();
 function inspectThumbnail(image){
+  if(image&&healthCache.has(image))return healthCache.get(image);
+  const result=inspectThumbnailRaw(image);
+  if(image)healthCache.set(image,result);
+  return result;
+}
+function locateGtlPanel(image){
+  if(image&&panelCache.has(image))return panelCache.get(image);
+  const result=locateGtlPanelRaw(image);
+  if(image)panelCache.set(image,result);
+  return result;
+}
+function inspectThumbnailRaw(image){
   if(!image||image.isEmpty())return {valid:false,gtl:false,score:0,panelRatio:0,reason:'CAP-002'};
   const small=image.resize({width:160,quality:'good'}),size=small.getSize();
   return inspectPixels(small.toBitmap(),size.width,size.height);
@@ -47,7 +62,7 @@ function inspectThumbnail(image){
 
 // Find the blue-grey GTL title stripe anywhere within a monitor image.
 // Geometry is returned in ORIGINAL image pixels, not monitor-normalized coordinates.
-function locateGtlPanel(image){
+function locateGtlPanelRaw(image){
   if(!image||image.isEmpty())return null;
   const img=image.resize({width:320,quality:'good'});
   const {width,height}=img.getSize();

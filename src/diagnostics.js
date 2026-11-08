@@ -32,6 +32,13 @@ function createDiagnostics(folder){
     }
     return changed;
   }
+  // One line per minute while the radar runs: how much work it really did.
+  function perf(stats){
+    try{
+      if(fs.existsSync(logfile)&&fs.statSync(logfile).size>512000)fs.renameSync(logfile,logfile+'.old');
+      fs.appendFile(logfile,JSON.stringify({at:new Date().toISOString(),stage:'perf',...stats})+'\n',()=>{});
+    }catch{}
+  }
   function scan(read,savedCount){
     scans++;recognized+=Math.max(0,read||0);saved+=Math.max(0,savedCount||0);
   }
@@ -95,6 +102,6 @@ function createDiagnostics(folder){
         ' | Falta: '+r.missingFields.join(',')),
       ...info.events.map(e=>e.at+' '+e.stage+' '+e.code+' '+e.detail)].join('\n');
   }
-  return {record,scan,setEngines,setOcrRows,markOcrStale,setBalance,snapshot,report};
+  return {record,perf,scan,setEngines,setOcrRows,markOcrStale,setBalance,snapshot,report};
 }
 module.exports={createDiagnostics,LABELS};

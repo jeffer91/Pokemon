@@ -340,6 +340,12 @@ Revisado con la base real del jugador (558 anuncios, 183 especies): el 60 % esta
 
 **Versión visible** en la cabecera, en el título de la ventana y en el diagnóstico.
 
+## v0.15.3 — Menos CPU: el OCR solo lee lo que cambió
+
+- La lectura completa del GTL (lo más pesado de la app) ya no se repite cada 8 s ni por cualquier píxel distinto. Solo se relee si la tabla cambió de verdad (0,3 % de una miniatura). Si la lectura quedó incompleta, se reintenta a los 4 s; la búsqueda avanzada, cada 3 s. Una página completa y quieta se vuelve a comprobar cada 30 s.
+- Cada captura se reduce una sola vez: el motor de captura y el bucle principal comparten el resultado.
+- Registro de rendimiento: una línea por minuto en `pokeradar-diagnostico.jsonl` (`stage:"perf"`) con capturas, tiempo medio, lecturas OCR y lecturas evitadas.
+
 ## v0.15.2 — Auditoría y limpieza
 
 - «Mis compras» ya no se mezcla con el historial viejo: se quitó el formulario antiguo «Compras y ventas» de Historial (tenía los mismos identificadores y reemplazaba la tabla cada 6 s). «Mis compras» también aparece llena al abrir la app.

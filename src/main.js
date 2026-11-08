@@ -37,6 +37,19 @@ let sessionActive=false,sessionVersion=0,working=false,mode='idle';
 let headerHash='',tableHash='',lastHeaderCheckedAt=0,lastTableCheckedAt=0,lastBalanceReadAt=0,
   lastPublished=0,lastOverlayBounds='',startedAt=0,ocrFailures=0,emptyReads=0;
 let lastDisplayedRows=null,lastDisplayedLayout=null,lastPageSignature='',lastMarketImage=null;
+// The full OCR is the heaviest thing the app does (seconds of CPU). It runs
+// only when the table really changed since the last read; an unchanged,
+// complete page is never re-read (just a slow 30 s safety re-check).
+let lastOcrImage=null,lastOcrKey='',lastOcrKind='market',lastOcrIncomplete=true;
+// Per-minute performance counters, written to the diagnostic log.
+const perf={since:Date.now(),ticks:0,captureMs:0,ocrRuns:0,ocrMs:0,skipped:0,engine:''};
+function flushPerf(){
+  const now=Date.now();if(now-perf.since<60000)return;
+  if(perf.ticks)diagnostics?.perf({minutes:+((now-perf.since)/60000).toFixed(1),ticks:perf.ticks,
+    captureAvgMs:Math.round(perf.captureMs/perf.ticks),ocrRuns:perf.ocrRuns,ocrMs:Math.round(perf.ocrMs),
+    ocrSkipped:perf.skipped,engine:perf.engine,mode,version:app.getVersion()});
+  Object.assign(perf,{since:now,ticks:0,captureMs:0,ocrRuns:0,ocrMs:0,skipped:0});
+}
 let marketCache=null,marketCacheAt=0;
 // 'hunt' = buscar gangas; 'learn' = misiones guiadas para llenar precios.
 let sessionKind='hunt',learner=null,lastPageFrom=null,lastMarketKey='';
@@ -328,14 +341,19 @@ async function checkBalance(image,size){
   }catch{}
 }
 
-function materiallyDifferent(previous,current){
+const thumbCache=new WeakMap();
+function thumb(image,W,H){
+  let t=thumbCache.get(image);
+  if(!t||t.W!==W){t={W,bmp:image.resize({width:W,height:H,quality:'good'}).toBitmap()};thumbCache.set(image,t);}
+  return t.bmp;
+}
+function materiallyDifferent(previous,current,threshold=.008){
   // Two GTL pages of the same search differ only in a few digits, so compare a
   // finer thumbnail and react to 0.8 % of changed pixels. The table is static
   // (no animations), so hover/cursor noise stays well below that.
   try{
     const W=320,H=160;
-    const a=previous.resize({width:W,height:H,quality:'good'}).toBitmap();
-    const b=current.resize({width:W,height:H,quality:'good'}).toBitmap();
+    const a=thumb(previous,W,H),b=thumb(current,W,H);
     if(a.length!==b.length)return true;
     let changed=0,count=0;
     for(let y=8;y<H-6;y++)for(let x=4;x<W-4;x++){
@@ -343,7 +361,7 @@ function materiallyDifferent(previous,current){
       const delta=Math.abs(a[i]-b[i])+Math.abs(a[i+1]-b[i+1])+Math.abs(a[i+2]-b[i+2]);
       count++;if(delta>=90)changed++;
     }
-    return count>0 && changed/count>.008; // measured: same page ≤0.03 %, next page ≈2.2 %
+    return count>0 && changed/count>threshold; // measured: same page ≤0.03 %, next page ≈2.2 %
   }catch{return true;}
 }
 function cropped(picture,width,height,part){
@@ -365,7 +383,9 @@ async function tick(){
   const version=sessionVersion,start=performance.now();
   let stage='window';
   try{
+    const capStart=performance.now();
     const capture=await getGameSource(mode==='gtl');
+    perf.ticks++;perf.captureMs+=performance.now()-capStart;perf.engine=capture?.via||capture?.code||'';
     if(!sessionActive||version!==sessionVersion)return;
     diagnostics?.setEngines(captureAgent.snapshot());
     if(!capture?.image){
@@ -434,7 +454,7 @@ async function tick(){
     }
     if(!sessionActive||version!==sessionVersion)return;
     if(!visibleGtl){
-      mode='idle';tableHash='';lastTableCheckedAt=0;lastDisplayedRows=null;lastPageSignature='';lastMarketImage=null;
+      mode='idle';tableHash='';lastTableCheckedAt=0;lastDisplayedRows=null;lastPageSignature='';lastMarketImage=null;lastOcrImage=null;
       diagnostics?.markOcrStale();
       track('gtl','pending','GTL-OCULTO','Pantalla captada; GTL no visible');
       track('ocr','pending','OCR-000','Esperando anuncios');
@@ -469,8 +489,7 @@ async function tick(){
     }: {...region(size.width,size.height,'market'),fullWidth:size.width,fullHeight:size.height};
     if(rect.height<180||rect.width<450)throw Error('La región del GTL es demasiado pequeña');
     const marketImage=image.crop({x:rect.x,y:rect.y,width:rect.width,height:rect.height});
-    const market=marketImage.toPNG();
-    const fp=imageHash(market),now=Date.now();
+    const now=Date.now();
     // Only frames from the same engine and size are comparable: another engine
     // crops the same page with a different alignment. Otherwise the footer
     // ("Mostrando X a Y") decides after the OCR.
@@ -483,8 +502,15 @@ async function tick(){
       lastDisplayedRows=null;lastPageSignature='';tableHash='';
       progress('nueva');await showCompact('Nueva página');
     }
-    if(!shouldCheckHeader(fp,tableHash,lastTableCheckedAt,now,8000))return;
-    tableHash=fp;lastTableCheckedAt=now;
+    // Re-read only on a real change (0.3 % of a thumbnail: a new value in a
+    // filter, a state word, a page). Incomplete reads and the Advanced Search
+    // form are re-checked sooner; a complete page waits 30 s.
+    const changedSinceOcr=!tableHash||!lastOcrImage||lastOcrKey!==marketKey||
+      materiallyDifferent(lastOcrImage,marketImage,.003);
+    const recheckMs=lastOcrKind==='advanced'?3000:lastOcrIncomplete?4000:30000;
+    if(!changedSinceOcr&&now-lastTableCheckedAt<recheckMs){perf.skipped++;return;}
+    const fp=imageHash(marketImage.toBitmap());
+    tableHash=fp;lastTableCheckedAt=now;lastOcrImage=marketImage;lastOcrKey=marketKey;
     // Never hide the last confirmed page just because a new OCR pass begins.
     setStatus({state:'leyendo',message:'GTL detectado · leyendo anuncios...',recognized:0});
     if(!sessionActive||version!==sessionVersion)return;
@@ -498,6 +524,7 @@ async function tick(){
       crop:rect
     });
     ocrFailures=0;
+    lastOcrKind=res.advanced?'advanced':res.ownListings?'own':'market';lastOcrIncomplete=true;
     if(res.cells&&!res.ownListings&&!res.advanced){
       // Smart IV pass: green = 31, learned digits, then digits-only OCR per cell.
       const refined=refineScan(res,{bitmap:enlarged.toBitmap(),
@@ -533,6 +560,7 @@ async function tick(){
     }
     if(!sessionActive||version!==sessionVersion)return;
     const ocrTime=Math.round(performance.now()-ocrStart);
+    perf.ocrRuns++;perf.ocrMs+=ocrTime;
     if(res.ownListings){
       storage.recordOwnListings(res.ownListings);
       const linked=storage.linkOwnListings(res.ownListings);
@@ -576,6 +604,7 @@ async function tick(){
     };
     const rows=(res.rows||[]).map(enrichSex);
     const partials=(res.partialRows||[]).map(enrichSex);
+    lastOcrIncomplete=partials.length>0||rows.length===0;
     // The footer ("Mostrando 11 a 20 de 81") proves a page turn even when two
     // pages look alike (same species, same nature, only digits differ).
     const pageMoved=!!res.pageInfo&&lastPageFrom!==null&&res.pageInfo.from!==lastPageFrom;
@@ -731,6 +760,7 @@ async function tick(){
     await showCompact('Error '+name);
   }finally{
     working=false;
+    flushPerf();
     if(sessionActive&&version===sessionVersion){
       const chosen=captureAgent?.selected();
       schedule(chosen?.startsWith('win-')?Math.max(900,nextDelay(mode)):nextDelay(mode));
@@ -741,7 +771,7 @@ function stopSession(){
   sessionActive=false;sessionVersion++;clearTimeout(scanTimer);
   mode='idle';headerHash='';tableHash='';lastHeaderCheckedAt=0;lastTableCheckedAt=0;
   diagnostics?.markOcrStale();
-  lastOverlayBounds='';lastPageSignature='';lastDisplayedRows=null;lastDisplayedLayout=null;lastMarketImage=null;lastPageFrom=null;
+  lastOverlayBounds='';lastPageSignature='';lastDisplayedRows=null;lastDisplayedLayout=null;lastMarketImage=null;lastOcrImage=null;lastPageFrom=null;
   overlay?.hide();
   try{globalShortcut.unregister(NEXT_KEY);}catch{}
   setStatus({state:'inactivo',message:'Radar detenido.',recognized:0,latency:null,learn:null,missions:[]});
@@ -763,7 +793,7 @@ async function startSession(kind='hunt'){
   }
   sessionActive=true;sessionVersion++;startedAt=Date.now();
   mode='idle';headerHash='';tableHash='';lastHeaderCheckedAt=0;lastTableCheckedAt=0;lastBalanceReadAt=0;emptyReads=0;
-  lastPageSignature='';lastDisplayedRows=null;lastDisplayedLayout=null;lastMarketImage=null;
+  lastPageSignature='';lastDisplayedRows=null;lastDisplayedLayout=null;lastMarketImage=null;lastOcrImage=null;
   setStatus({state:'esperando',message:'Buscando pantalla de PokéMMO...',recognized:0,latency:null});
   publishLearn();
   track('window','pending','WIN-000','Buscando PokéMMO');
