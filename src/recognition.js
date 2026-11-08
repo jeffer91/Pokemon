@@ -200,7 +200,7 @@ function parseScreen(data,width,height,options={}) {
     balance,page:null,pageInfo,footerY:footerWord?footerWord.y:null,wordCount:words.length};
   // "Tus Anuncios": the state column (Activo/Expirado/Vendido) never appears
   // in the market. Button labels ("Cancelar") are not always read on short pages.
-  const stateWords=words.filter(w=>/^(activo|expirado|vendido)$/.test(normalized(w.text))).length;
+  const stateWords=words.filter(w=>/^(activo|expirado|vendido|terminado)$/.test(normalized(w.text))).length;
   if(stateWords>=1&&(/cancelar|tomar|cobrar|no reclamado/.test(all)||stateWords>=2)){
     const ownListings=[];
     // A detail popup occludes the table: do not mix its fields with listings.
@@ -211,9 +211,18 @@ function parseScreen(data,width,height,options={}) {
       const match=name.match(/(?:Nv[.,:]?\s*)?(\d{1,3})\s+([\p{L}\p{M}.'’\-\s♂♀0-9]+)/iu);
       const priceWords=fieldWords(row,.42,.53,0,1);
       const price=parseMoney(join(priceWords));
-      const state=normalized(join(fieldWords(row,.63,.73,0,1)));
-      if(match && price && priceWords.every(w=>w.conf>=60) && ['activo','expirado','vendido'].includes(state))
-        ownListings.push({species:match[2].trim(),level:Number(match[1]),price,state,rank:i+1});
+      // "No Reclamado": money waiting for you = the ad was SOLD for that amount.
+      const unclaimed=parseMoney(join(fieldWords(row,.53,.63,0,1)));
+      const rawState=normalized(join(fieldWords(row,.63,.73,0,1)));
+      // The game says "Terminado" for a finished ad: sold if money is waiting,
+      // expired (Pokémon to take back) if No Reclamado is $0.
+      const state=rawState==='terminado'?(unclaimed>0?'vendido':'expirado'):rawState;
+      // A finished ad's price is greyed out; the unclaimed amount is the sale.
+      const readable=price&&priceWords.every(w=>w.conf>=60);
+      const finalPrice=readable?price:state==='vendido'&&unclaimed>0?unclaimed:null;
+      if(match && finalPrice && ['activo','expirado','vendido'].includes(state))
+        ownListings.push({species:match[2].trim(),level:Number(match[1]),price:finalPrice,state,rank:i+1,
+          unclaimed:unclaimed||0});
     }
     return {...base,ownListings,rows:[],partialRows:[],layout:null};
   }

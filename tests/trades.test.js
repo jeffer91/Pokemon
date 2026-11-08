@@ -75,3 +75,15 @@ test('the filters you set are checked against the mission',()=>{
   assert.match(extra.text,/Quita IV Velocidad Min 31/);
   assert.equal(checkFilters({nature:'firme'},scizor).ok,null,'unread fields are not errors');
 });
+
+test('a purchase added by hand after the sale still closes with the real profit',()=>{
+  const db=openDatabase(fs.mkdtempSync(path.join(os.tmpdir(),'radar-trade-')));
+  // The player's real case: Alfa Krookodile bought at 10.000, shown "Terminado"
+  // with 16.000 unclaimed (read as vendido), registered by hand afterwards.
+  db.recordPurchase({species:'Krookodile',level:67,nature:'cauta',ivs:[25,18,14,31,23,31],price:10000,variant:'alfa'});
+  db.linkOwnListings([{species:'Krookodile',level:67,price:16000,state:'vendido',unclaimed:16000}]);
+  const t=db.trades()[0];
+  assert.equal(t.state,'vendido');
+  assert.equal(t.net,5000);
+  assert.equal(t.variant,'alfa');
+});

@@ -1,4 +1,4 @@
-# PokéRadar GTL — v0.15.0
+# PokéRadar GTL — v0.15.1
 
 Aplicación de escritorio Electron para Windows 11. **Play** inicia una sesión de lectura visual del GTL, sin formularios de cuota ni posiciones X/Y, y muestra un pequeño radar flotante. No realiza compras ni controla el cliente del juego.
 
@@ -339,3 +339,9 @@ Revisado con la base real del jugador (558 anuncios, 183 especies): el 60 % esta
 - Ritmo: 0,7 s con el GTL visible (OCR solo si la tabla cambia), 2,5 s fuera del GTL y pausa total mientras usas la ventana de PokéRadar.
 
 **Versión visible** en la cabecera, en el título de la ventana y en el diagnóstico.
+
+## v0.15.1 — Ventas reales detectadas («Terminado»)
+
+- En *Tus Anuncios* el juego marca un anuncio cerrado como **«Terminado»**. Con dinero en **No Reclamado** = **vendido** (ese monto es la venta); con $0 = venció sin venderse.
+- El precio de un anuncio terminado aparece en gris: si no se lee, se usa el monto de No Reclamado.
+- Primera venta real registrada: Krookodile **Alfa** cauta comprado a 10.000 y vendido a 16.000 en ~15 min; cuota confirmada de 1.000 (el saldo bajó de 33.800 a 32.800 al publicar) → **+5.000**.
