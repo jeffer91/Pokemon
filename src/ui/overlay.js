@@ -24,7 +24,7 @@ window.radar.on('radar:overlay',payload=>{
     const slot=document.createElement('div');slot.className='slot';
     slot.style.height=payload.step+'px';
     const item=byRank.get(i);
-    if(item){
+    if(item && item.reason!=='LECTURA_INCOMPLETA' && item.reason!=='PRECIO_NO_LEIDO'){
       const pill=document.createElement('div');
       pill.className='decision '+(item.decision==='COMPRAR'?'buy':
         item.decision==='NO_COMPRAR'?'reject':'pending')+
@@ -33,8 +33,8 @@ window.radar.on('radar:overlay',payload=>{
       const score=document.createElement('strong');
       score.textContent=Number.isFinite(item.score)?item.score.toFixed(1)+'/10':'—/10';
       const state=document.createElement('strong');
-      state.textContent=item.decision==='COMPRAR'?'COMPRAR':
-        item.decision==='NO_COMPRAR'?'NO COMPRAR':'PENDIENTE';
+      state.textContent=item.decision==='COMPRAR'?'COMPRA ESTE AHORA':
+        item.decision==='NO_COMPRAR'?'NO COMPRAR':'NO COMPRAR AÚN';
       upper.append(score,state);
       const why=document.createElement('span');why.className='decision-reason';
       why.textContent=String(item.reasonText||'En análisis').slice(0,36);

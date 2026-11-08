@@ -1,6 +1,7 @@
 'use strict';
 const {median,normalizedNature,availableToSpend}=require('./market');
 const {findCatalog,catalogFit}=require('./catalog');
+const {findPriority}=require('./priority-profiles');
 // These are editable targets, not claims that a matching specimen is available.
 // Garchomp is intentionally retained as a separate objective pending a team decision.
 const TEAM=[
@@ -178,7 +179,12 @@ function priceSummary(rows,profile,mode='direct',now=Date.now()){
 function grade(row,decision,profile=null){
   const score=ivScore(row);
   const fit=profile?fitScore(row,profile):null;
-  const profileFit=catalogFit(row);
+  const priority=findPriority(row.species);
+  const priorityFit=priority?.requiredIvs?.length && Array.isArray(row.ivs) && row.ivs.every(Number.isInteger)?{
+    score:Math.round(10*(8*priority.requiredIvs.reduce((sum,i)=>sum+row.ivs[i]/31,0)/priority.requiredIvs.length+
+      2*(normalizedNature(row.nature)===normalizedNature(priority.nature)?1:0)))/10,
+    provisional:true}:null;
+  const profileFit=catalogFit(row)||priorityFit;
   const rev=decision&&Number.isFinite(decision.priceReference)&&decision.comparables>=5?
     Math.round(Math.max(0,Math.min(10,5+(decision.discount||0)*20+(decision.confidence||0)*2))*10)/10:null;
   const cri=score; // Potential from IVs only; breed compatibility not yet verified.

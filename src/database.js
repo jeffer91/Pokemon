@@ -145,6 +145,25 @@ function openDatabase(folder) {
     for(const item of CATALOG)catalogInsert.run(item.id,item.species,item.version,JSON.stringify(item),loadedAt);
     db.exec('COMMIT');
   }catch(error){db.exec('ROLLBACK');throw error;}
+  db.exec(`CREATE TABLE IF NOT EXISTS own_listings (
+    listing_key TEXT PRIMARY KEY, species TEXT NOT NULL, level INTEGER NOT NULL,
+    price INTEGER NOT NULL, state TEXT NOT NULL, first_seen INTEGER NOT NULL,
+    last_seen INTEGER NOT NULL)`);
+  function recordOwnListings(rows){
+    const stmt=db.prepare(`INSERT INTO own_listings VALUES(?,?,?,?,?,?,?)
+      ON CONFLICT(listing_key) DO UPDATE SET state=excluded.state,last_seen=excluded.last_seen`);
+    db.exec('BEGIN IMMEDIATE');
+    try{for(const row of rows){
+      if(!row || typeof row.species!=='string' || !Number.isInteger(row.level) || row.level<1 || row.level>100 ||
+        !Number.isSafeInteger(row.price) || row.price<=0 || !['activo','expirado','vendido'].includes(row.state))continue;
+      const key=JSON.stringify([row.species.toLowerCase(),row.level,row.price]);
+      const now=Date.now();stmt.run(key,row.species,row.level,row.price,row.state,now,now);
+    }db.exec('COMMIT');}catch(e){db.exec('ROLLBACK');throw e;}
+  }
+  function ownListings(){return db.prepare('SELECT * FROM own_listings ORDER BY last_seen DESC LIMIT 100').all().map(row=>{
+    const sales=db.prepare("SELECT count(*) count, avg(price-fee) net FROM transactions WHERE kind='SELL' AND lower(species)=lower(?)").get(row.species);
+    return {...row,confirmedSales:sales.count,averageNet:sales.net===null?null:Math.round(sales.net)};
+  });}
   const check=db.prepare('PRAGMA quick_check').get();
   if(Object.values(check)[0] !== 'ok') throw new Error('La base SQLite no superó la comprobación de integridad.');
   const setStmt=db.prepare('INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value');
@@ -387,7 +406,7 @@ function openDatabase(folder) {
   async function saveBackup(){const dest=path.join(folder,'backups');fs.mkdirSync(dest,{recursive:true});
     const file=path.join(dest,`pokeradar-${new Date().toISOString().slice(0,10)}.sqlite`);
     if(!fs.existsSync(file)) await backup(db,file);return file;}
-  return {db,filename,settings:getSettings,applySettings,recordListings,recordMarketScan,candidates,targetPrices,marketIntelligence,catalogProfiles,recordRecommendation,
+  return {db,filename,recordOwnListings,ownListings,settings:getSettings,applySettings,recordListings,recordMarketScan,candidates,targetPrices,marketIntelligence,catalogProfiles,recordRecommendation,
     recordBalance,latestBalance,recent,history,stats,summary,addTransaction,transactionHistory,saveBackup,
     competitiveProfiles,projects,createProject,updateProject,close:()=>db.close()};
 }

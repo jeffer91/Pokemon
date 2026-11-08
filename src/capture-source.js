@@ -60,6 +60,9 @@ function createGameCapture({desktopCapturer,screen,locateWindow,inspectThumbnail
       gtl:record.gtl,score:record.score};}
     return record;
   }
+  function toDip(rect){
+    return rect && typeof screen.screenToDipRect==='function'?screen.screenToDipRect(null,rect):rect;
+  }
   async function run(id,active){
     if(id==='electron-window'){
       let sources;
@@ -73,7 +76,7 @@ function createGameCapture({desktopCapturer,screen,locateWindow,inspectThumbnail
         let rect=null;
         try{rect=await locateWindow();}catch{}
         if(!validRect(rect))continue;
-        return {image:source.thumbnail,rect,via:id,code:'EW-OK',
+        return {image:source.thumbnail,rect:toDip(rect),via:id,code:'EW-OK',
           detail:'Ventana PokéMMO captada y localizada ('+names.length+' coincidencias)'};
       }
       return fail(names.length?'EW-NO-RECT':'EW-NOT-FOUND',names.length?
@@ -86,6 +89,7 @@ function createGameCapture({desktopCapturer,screen,locateWindow,inspectThumbnail
       if(!validRect(rect))return fail('W32-NOT-FOUND','Win32 no localizó la ventana del juego'+locateHint());
       let display,src;
       try {
+        rect=toDip(rect);
         display=screen.getDisplayMatching(rect);
         const d=display.bounds,scale=display.scaleFactor||1;
         const candidates=await desktopCapturer.getSources({types:['screen'],thumbnailSize:{
@@ -153,7 +157,7 @@ function createGameCapture({desktopCapturer,screen,locateWindow,inspectThumbnail
         const response=await nativeCapture(id==='win-gdi'?'copy':'print');
         if(!response?.image||!health(response.image).valid)
           return fail(response?.code||'GDI-EMPTY',response?.detail||'Captura nativa sin imagen útil');
-        return {...response,via:id};
+        return {...response,rect:toDip(response.rect),via:id};
       }catch(e){return fail('NATIVE-ERROR',String(e.message||e).slice(0,180));}
     }
     return {...fail('CAP-UNKNOWN','Motor desconocido'),unsupported:true};

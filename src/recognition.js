@@ -90,12 +90,12 @@ function parseScreen(data,width,height,options={}) {
     // Convert OCR positions to panel-local units. Y uses PANEL WIDTH so the
     // row step scales consistently regardless of screen aspect ratio.
     words=words.map(w=>({
-      ...w,x:(rect.x+w.x*width-panel.x)/panel.width,
-      y:(rect.y+w.y*height-panel.y)/panel.width
+      ...w,x:(rect.x+w.x*(rect.width||width)-panel.x)/panel.width,
+      y:(rect.y+w.y*(rect.height||height)-panel.y)/panel.width
     })).filter(w=>w.x>=0&&w.x<=1.02&&w.y>=.08&&w.y<=.68);
   }else if(rect){
-    words=words.map(w=>({...w,x:(rect.x+w.x*width)/rect.fullWidth,
-      y:(rect.y+w.y*height)/rect.fullHeight}));
+    words=words.map(w=>({...w,x:(rect.x+w.x*(rect.width||width))/rect.fullWidth,
+      y:(rect.y+w.y*(rect.height||height))/rect.fullHeight}));
   }
   const all=normalized(join(words));
   const buyButtons=words.filter(w=>normalized(w.text)==='comprar' &&
@@ -113,6 +113,22 @@ function parseScreen(data,width,height,options={}) {
   const balance=balanceMatch?parseMoney(balanceMatch[1]):null;
   const base={gtl,advanced,context,sort:isOld?'oldest':isNew?'newest':'unknown',
     balance,page:null,wordCount:words.length};
+  if(isPanel && /cancelar/.test(all) && /activo|expirado|vendido/.test(all)){
+    const ownListings=[];
+    // A detail popup occludes the table: do not mix its fields with listings.
+    if(!/pokemon datos|iv ataque|naturaleza:/.test(all))for(let i=0;i<10;i++){
+      const y=.187+i*.0415;
+      const row=fieldWords(words,0,1.02,y-.017,y+.017);
+      const name=join(fieldWords(row,.11,.35,0,1));
+      const match=name.match(/(?:Nv[.,:]?\s*)?(\d{1,3})\s+([\p{L}\p{M}.'’\-\s♂♀0-9]+)/iu);
+      const priceWords=fieldWords(row,.42,.53,0,1);
+      const price=parseMoney(join(priceWords));
+      const state=normalized(join(fieldWords(row,.63,.73,0,1)));
+      if(match && price && priceWords.every(w=>w.conf>=60) && ['activo','expirado','vendido'].includes(state))
+        ownListings.push({species:match[2].trim(),level:Number(match[1]),price,state,rank:i+1});
+    }
+    return {...base,ownListings,rows:[],partialRows:[],layout:null};
+  }
   if(!gtl||advanced)return {...base,rows:[],partialRows:[],layout:null};
   const rows=[],partialRows=[];
   const cfg=isPanel?{
@@ -132,9 +148,9 @@ function parseScreen(data,width,height,options={}) {
     if(row.length<3)continue;
     const nameWords=fieldWords(row,...cfg.name,0,1);
     const rawName=join(nameWords);
-    const match=rawName.match(/^(?:N[vw][.,:]?\s*)?(\d{1,3})\s*([\p{L}\p{M}][\p{L}\p{M}.'’\-\s♂♀]*)/iu);
+    const match=rawName.match(/^(?:N[vw][.,:]?\s*)?(\d{1,3})\s*([\p{L}\p{M}][\p{L}\p{M}.'’\-\s♂♀0-9]*)/iu);
     const level=match?Number(match[1]):null;
-    const species=match?cleanupName(match[2].replace(/[^\p{L}\p{M}.'’\-\s♂♀]/gu,'')):null;
+    const species=match?cleanupName(match[2].replace(/[^\p{L}\p{M}.'’\-\s♂♀0-9]/gu,'')):null;
     const natureWords=fieldWords(row,...cfg.nature,0,1);
     const nature=normalized(join(natureWords)).replace(/[^\p{L}\s]/gu,'').trim();
     const priceWords=fieldWords(row,...cfg.price,0,1);
@@ -220,7 +236,18 @@ async function createRecognizer(){
     return parseBalanceText(result.data.text);
   },async analyze(image,width,height,options={}) {
     const result=await worker.recognize(image,{}, {blocks:true,text:true});
-    return parseScreen(result.data,width,height,options);
+    let parsed=parseScreen(result.data,width,height,options);
+    if(parsed.gtl && !parsed.advanced && !parsed.ownListings && parsed.rows.length<10){
+      // A second segmentation pass can recover whole rows; never stitch IVs
+      // from different readings or use a partial row as a confirmed offer.
+      try{
+        await worker.setParameters({tessedit_pageseg_mode:PSM.AUTO});
+        const retry=await worker.recognize(image,{}, {blocks:true,text:true});
+        const alternate=parseScreen(retry.data,width,height,options);
+        if(!alternate.ownListings && !alternate.advanced && alternate.rows.length>parsed.rows.length)parsed=alternate;
+      }finally{await worker.setParameters({tessedit_pageseg_mode:PSM.SPARSE_TEXT});}
+    }
+    return parsed;
   },close:()=>worker.terminate()};
 }
 module.exports={parseScreen,parseMoney,parseBalanceText,flattenWords,cleanWords,createRecognizer,normalized,overlayLayout,isGtlHeader};

@@ -198,3 +198,14 @@ test('diagnóstico OCR dice qué campo falta en cada una de las diez filas',()=>
   assert.equal(result.partialRows.length,1);
   assert.ok(result.diagnosticRows[2].missingFields.includes('NATURALEZA'));
 });
+
+test('reads own active offer separately from market at doubled OCR resolution',()=>{
+  const panel={x:387,y:132,width:1152};
+  const crop={x:387,y:284,width:1152,height:553,fullWidth:1920,fullHeight:1080};
+  const at=(text,x,y)=>({text,confidence:96,bbox:{x0:(x*1152)*2-2,x1:(x*1152)*2+2,
+    y0:(132+y*1152-284)*2-2,y1:(132+y*1152-284)*2+2}});
+  const data={words:[at('Nv. 22 Ariados',.23,.187),at('$2.900',.48,.187),at('Activo',.68,.187),at('Cancelar',.79,.187)]};
+  const result=parseScreen(data,2304,1106,{panel,crop,gtlConfirmed:true});
+  assert.equal(result.rows.length,0);
+  assert.deepEqual(result.ownListings,[{species:'Ariados',level:22,price:2900,state:'activo',rank:1}]);
+});

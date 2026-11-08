@@ -13,7 +13,7 @@ function normalizedNature(value){
 function validPrice(n) { return Number.isSafeInteger(n) && n > 0 && n <= 2_000_000_000; }
 function validIvs(ivs) { return Array.isArray(ivs) && ivs.length === 6 && ivs.every(n => Number.isInteger(n) && n >= 0 && n <= 31); }
 function validListing(p) {
-  return !!p && typeof p.species === 'string' && /^[\p{L}\p{M}.'’\-\s♂♀]{2,40}$/u.test(p.species) &&
+  return !!p && typeof p.species === 'string' && /^[\p{L}\p{M}.'’\-\s♂♀0-9]{2,40}$/u.test(p.species) &&
     Number.isInteger(p.level) && p.level >= 1 && p.level <= 100 &&
     typeof p.nature === 'string' && NATURES.has(normalizedNature(p.nature)) &&
     validIvs(p.ivs) && validPrice(p.price);
@@ -30,7 +30,9 @@ function comparable(a, b) {
   if (!validListing(a) || !validListing(b) || a.species.toLowerCase() !== b.species.toLowerCase()) return false;
   // Comparable quality: same useful perfect IV positions and same nature.
   return signature(a) === signature(b) && normalizedNature(a.nature) === normalizedNature(b.nature) &&
-    (a.level === 1) === (b.level === 1) && (a.sex || '?') === (b.sex || '?');
+    (a.level === 1) === (b.level === 1) && (a.sex || '?') === (b.sex || '?') &&
+    // Preserve zero-IV builds and distinguish low bulk from competitive bulk.
+    a.ivs.every((v,i)=>(v===0)===(b.ivs[i]===0) && Math.abs(v-b.ivs[i])<=5);
 }
 function saleFee(price, settings = {}) {
   if (!validPrice(price)) return null;

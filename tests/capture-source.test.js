@@ -183,3 +183,11 @@ test('Win32 diagnostics include a reason instead of a silent null',async()=>{
   assert.equal(engine.code,'W32-NOT-FOUND');
   assert.match(engine.detail,/WIN32-EXEC/);
 });
+
+test('Windows physical coordinates become DIP before positioning overlay at 125 percent',async()=>{
+  const api=createGameCapture({desktopCapturer:{getSources:async()=>[{name:'PokeMMO',thumbnail:image()}]},
+    screen:{screenToDipRect:(_window,r)=>Object.fromEntries(Object.entries(r).map(([k,v])=>[k,v/1.25]))},
+    locateWindow:async()=>({x:0,y:0,width:1920,height:1080}),inspectThumbnail:inspect});
+  await api.capture();
+  assert.deepEqual(api.getGameRect(),{x:0,y:0,width:1536,height:864});
+});

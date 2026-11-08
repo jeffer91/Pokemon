@@ -1,6 +1,6 @@
 {
   "name": "pokeradar-gtl",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "PokéRadar: radar GTL, 110 perfiles competitivos y proyectos SQLite",
   "private": true,
   "main": "src/main.js",

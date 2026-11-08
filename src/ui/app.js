@@ -32,6 +32,15 @@ function renderData(data){
   $('total').textContent=s.total||0;$('observations').textContent=s.observations||0;
   $('decisions').textContent=(s.decisions||0)+' decisiones';
   $('balance').textContent=currency(data.balance);
+  const own=$('own-listings');own.replaceChildren();
+  for(const row of data.ownListings||[]){
+    const days=Math.floor((row.last_seen-row.first_seen)/86400000);
+    own.append(itemNode(row.species+' · Nv. '+row.level+' · '+currency(row.price),
+      row.state+' · observado durante '+days+' días · '+(row.confirmedSales?row.confirmedSales+' ventas registradas de esta especie, neto medio '+currency(row.averageNet)+' (pueden diferir los IV) · ':'')+
+      (row.state==='vendido'?'Venta indicada por el juego; confirmar importe neto.':
+       days>=3?'Revisar precio frente a ejemplares equivalentes.':'Recopilando duración del anuncio.')));
+  }
+  if(!own.children.length)own.textContent='Abre Tus Anuncios para registrar tus ofertas.';
   renderTeamData(data);
   renderCatalog(data.catalog||[]);
   renderCompetitive(data.competitive||[]);

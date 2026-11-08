@@ -84,7 +84,7 @@ async function showResults(rows,version,layout=null){
   if(!sessionActive||sessionVersion!==version)return;
   if(!game)return showCompact();
   const scale=1; // Automatic positioning; previous manually stored offsets are ignored.
-  const width=Math.round(194*scale);
+  const width=Math.round(210*scale);
   const auto=layout && Number.isFinite(layout.firstRowTopNorm) ? layout : null;
   const pixel=layout?.kind==='panel' && layout.panel && layout.frameWidth>0 && layout.frameHeight>0?
     layout:null;
@@ -140,7 +140,7 @@ function publishData(force=false){
   summary.activity=marketCache.activity;
   broadcast('radar:data',{
     summary,profiles,prices,catalog:storage.catalogProfiles(),
-     competitive:storage.competitiveProfiles(),projects:storage.projects(),
+     competitive:storage.competitiveProfiles(),projects:storage.projects(),ownListings:storage.ownListings(),
     coverage:coverage(profiles),recent:recentEvaluated(profiles),history:storage.history(),
     trades:storage.transactionHistory(),settings:storage.settings(),balance:storage.latestBalance()
   });
@@ -299,7 +299,9 @@ async function tick(){
       diagnostics?.setBalance(balance,'HUD OCR ampliado');
     }
     const ocrStart=performance.now();
-    const res=await recognizer.analyze(market,rect.width,rect.height,{
+    const enlarged=marketImage.resize({width:rect.width*2,quality:'best'});
+    const enlargedSize=enlarged.getSize();
+    const res=await recognizer.analyze(enlarged.toPNG(),enlargedSize.width,enlargedSize.height,{
       gtlConfirmed:visibleGtl,
       panel:panel||undefined,
       crop:rect
@@ -307,6 +309,14 @@ async function tick(){
     ocrFailures=0;
     if(!sessionActive||version!==sessionVersion)return;
     const ocrTime=Math.round(performance.now()-ocrStart);
+    if(res.ownListings){
+      storage.recordOwnListings(res.ownListings);
+      lastDisplayedRows=null;lastPageSignature='';
+      await showCompact('Mis anuncios');
+      publishData(true);
+      setStatus({state:'activo',message:res.ownListings.length+' anuncios propios leídos',recognized:res.ownListings.length});
+      return;
+    }
     if(res.advanced){
       diagnostics?.markOcrStale();
       track('ocr','pending','OCR-FILTROS','Búsqueda avanzada abierta',ocrTime);
@@ -485,7 +495,7 @@ function handlers(){
     summary.research=intelligence.suggestions;
     summary.activity=intelligence.activity;
     return {status,settings:storage.settings(),summary,catalog:storage.catalogProfiles(),
-     competitive:storage.competitiveProfiles(),projects:storage.projects(),
+     competitive:storage.competitiveProfiles(),projects:storage.projects(),ownListings:storage.ownListings(),
     profiles,prices:storage.targetPrices(profiles),coverage:coverage(profiles),
     recent:recentEvaluated(profiles),history:storage.history(),trades:storage.transactionHistory(),
     balance:storage.latestBalance(),diagnostics:diagnostics?.snapshot()};});

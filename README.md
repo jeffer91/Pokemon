@@ -1,4 +1,4 @@
-# PokéRadar GTL — Fase 1 (v0.2.1)
+# PokéRadar GTL — v0.8.0
 
 Aplicación de escritorio Electron para Windows 11. **Play** inicia una sesión de lectura visual del GTL, sin formularios de cuota ni posiciones X/Y, y muestra un pequeño radar flotante. No realiza compras ni controla el cliente del juego.
 
@@ -178,3 +178,13 @@ Actualizar: `git pull origin main`, `npm install`, `npm run check`, `npm test`, 
 Actualizar desde Windows: `git pull origin main`, `npm install`, `npm run check`, `npm test`, `npm start`.
 
 Nota: la alineación de las etiquetas flotantes depende de la geometría detectada en el juego real y requiere otra ronda de captura/validación en Windows para confirmar la coincidencia fila por fila; esta versión no afirma haber resuelto ese problema pendiente.
+
+## v0.8.0 — Alineación DPI, lectura ampliada y anuncios propios
+
+- Coordenadas físicas de Win32/GDI/PrintWindow convertidas a DIP antes de colocar el overlay. El motor visual conserva sus coordenadas DIP.
+- Alerta «COMPRA ESTE AHORA» para decisiones COMPRAR, al costado del panel y alineada con la fila. Las filas ilegibles no muestran tarjetas de decisión.
+- OCR con ampliación 2× y segunda segmentación cuando faltan filas; conserva una lectura completa, sin mezclar campos entre pasadas. Esto puede aumentar la latencia.
+- Comparables más estrictos: diferencia máxima de cinco puntos por IV y distinción de IV cero. Puntuación de ajuste con los perfiles competitivos disponibles. No implica una probabilidad de venta.
+- Tus Anuncios se registra aparte en Historial: especie, nivel, precio, estado y duración observada. Especies iguales con mismo nivel y precio se agrupan porque la pantalla no expone un ID único. Una ausencia no se interpreta como venta.
+- Ventas confirmadas introducidas en el formulario muestran cantidad y neto medio por especie; no son comparables individuales sin IV/naturaleza. Las fichas emergentes de detalle todavía no se incorporan automáticamente.
+- Validación: comprobación sintáctica y 96 pruebas locales. Pruebas de escalado y OCR utilizan adaptadores/fixtures; falta validar el comportamiento completo en Windows con PokéMMO real.
