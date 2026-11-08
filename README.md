@@ -1,4 +1,4 @@
-# PokéRadar GTL — v0.8.0
+# PokéRadar GTL — v0.9.0
 
 Aplicación de escritorio Electron para Windows 11. **Play** inicia una sesión de lectura visual del GTL, sin formularios de cuota ni posiciones X/Y, y muestra un pequeño radar flotante. No realiza compras ni controla el cliente del juego.
 
@@ -188,3 +188,33 @@ Nota: la alineación de las etiquetas flotantes depende de la geometría detecta
 - Tus Anuncios se registra aparte en Historial: especie, nivel, precio, estado y duración observada. Especies iguales con mismo nivel y precio se agrupan porque la pantalla no expone un ID único. Una ausencia no se interpreta como venta.
 - Ventas confirmadas introducidas en el formulario muestran cantidad y neto medio por especie; no son comparables individuales sin IV/naturaleza. Las fichas emergentes de detalle todavía no se incorporan automáticamente.
 - Validación: comprobación sintáctica y 96 pruebas locales. Pruebas de escalado y OCR utilizan adaptadores/fixtures; falta validar el comportamiento completo en Windows con PokéMMO real.
+
+## v0.9.0 — Buscador de gangas: lectura inteligente y puntaje 0–10
+
+**Objetivo:** encontrar Pokémon para comprar barato y revender con ganancia, más rápido que otros jugadores.
+
+**Captura a resolución real.** Con Windows escalado (125 %), los motores Win32/PrintWindow recibían el juego reducido (1536×816) y el OCR leía dígitos borrosos. Ahora los scripts de Windows son *DPI-aware* y la Pantalla visual pide la resolución física del monitor. Los motores de PowerShell quedan solo como respaldo, aunque una sesión anterior los hubiera guardado como preferidos.
+
+**Lectura inteligente de IV (una sola pasada de OCR):**
+- Un IV pintado de **verde es 31**. Si el OCR leyó «31» en una celda blanca (en realidad 34, 37…), se vuelve a leer.
+- La app **aprende la forma de cada dígito** a partir de las lecturas seguras (`digit-templates.json` en la carpeta de datos) y reconoce las celdas dudosas sin Tesseract.
+- Lo que siga sin leerse se pasa por un OCR solo de dígitos, celda por celda.
+- Se eliminó la segunda pasada completa, que duplicaba el tiempo de lectura.
+- Las naturalezas toleran un error de OCR («rnansa» → mansa) solo si hay una única candidata.
+- En Diagnóstico se ve cuántas celdas se resolvieron por color, por plantilla y por OCR de celda.
+
+**Cerebro (`src/brain.js`): puntaje = calidad (0–4) + ganga (0–6).**
+- **Calidad:** cercanía al perfil competitivo de su línea evolutiva (Gible → Garchomp, Litwick → Chandelure: `src/lines.js`), es decir, naturaleza ideal y 31 requeridos, más la cantidad total de 31.
+- **Ganga:** ganancia neta = reventa estimada − precio − **cuota de 1.000 ¥**.
+  - La reventa es el percentil 25 de los precios anunciados de la **misma clase** (especie + naturaleza ideal + 31 requeridos + número de 31), no de anuncios idénticos.
+  - Ganancia ≥ 1.000 es buena, ≥ 5.000 muy buena y ≥ 10.000 excelente.
+- **COMPRAR** cuando el puntaje es ≥ 7, la ganancia es ≥ 1.000 y el precio está dentro del presupuesto (se reserva el 30 % del saldo).
+  - Una ganancia pequeña solo llega a 7 en Pokémon ideales, que se venden rápido.
+  - Una ganancia grande llega casi sola, pero nunca en un Pokémon sin 31 útiles, porque un precio *pedido* alto no prueba que se venda.
+- Se necesitan al menos 3 anuncios de la clase. Mientras tanto aparece **APRENDIENDO** con la nota de calidad.
+
+**Avisos:** la etiqueta COMPRA ESTE AHORA parpadea en verde y suena un doble tono una vez por ganga nueva. Las filas fuera de presupuesto salen en rojo y el resto en gris.
+
+**Interfaz:** ocupa todo el ancho de la ventana; las pestañas se reparten sin barra de desplazamiento.
+
+**Límites honestos:** la reventa se estima con precios anunciados, no con ventas confirmadas. El sexo todavía no influye en el puntaje. La habilidad no se lee en la tabla. Cuantas más páginas recorras (por ejemplo, buscando tus Pokémon ideales ordenados por precio), mejores serán las estimaciones.

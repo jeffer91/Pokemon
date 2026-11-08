@@ -2,9 +2,25 @@
 const path = require('node:path');
 const fs = require('node:fs');
 const {validListing} = require('./market');
+const {diagnosticRowsFor}=require('./cell-reader');
 const NATURES=new Set(('fuerte hurana audaz firme picara osada docil placida agitada floja miedosa activa seria alegre ingenua modesta afable mansa timida alocada serena amable grosera cauta rara').split(' '));
 
 
+function levenshtein(a,b){
+  const m=a.length,n=b.length,d=Array.from({length:m+1},(_,i)=>[i,...Array(n).fill(0)]);
+  for(let j=1;j<=n;j++)d[0][j]=j;
+  for(let i=1;i<=m;i++)for(let j=1;j<=n;j++)
+    d[i][j]=Math.min(d[i-1][j]+1,d[i][j-1]+1,d[i-1][j-1]+(a[i-1]===b[j-1]?0:1));
+  return d[m][n];
+}
+// OCR often confuses rn/m, l/i, etc. Accept only a UNIQUE nature at distance 1.
+function fuzzyNature(raw){
+  const s=String(raw||'').replace(/\s+/g,'');
+  if(NATURES.has(s))return s;
+  if(s.length<4)return null;
+  const close=[...NATURES].filter(n=>levenshtein(n,s)<=1||(s.length>n.length&&levenshtein(n,s)<=2&&s.includes(n.slice(0,3))));
+  return close.length===1?close[0]:null;
+}
 function normalized(s='') {return String(s).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();}
 function parseBalanceText(text){
   const str=String(text||'');
@@ -141,6 +157,14 @@ function parseScreen(data,width,height,options={}) {
     ivStart:.410,ivStep:.0203,ivWidth:.0203
   };
   const grid=isPanel?panelRowGrid(words):rowGrid(words);
+  // Learn the real IV column centres from this frame's own digits: the panel
+  // width estimate can drift a few pixels, the digits cannot.
+  const ivCenters=Array.from({length:6},(_,j)=>{
+    const nominal=cfg.ivStart+(j+.5)*cfg.ivStep;
+    const xs=words.filter(w=>/^\d{1,2}$/.test(w.text)&&Math.abs(w.x-nominal)<cfg.ivStep*.45)
+      .map(w=>w.x).sort((a,b)=>a-b);
+    return xs.length>=3?xs[Math.floor(xs.length/2)]:nominal;
+  });
   for(let i=0;i<10;i++){
     const y=grid.top+i*grid.step;
     const row=fieldWords(words,isPanel?0:.20,isPanel?1.02:.80,
@@ -152,25 +176,27 @@ function parseScreen(data,width,height,options={}) {
     const level=match?Number(match[1]):null;
     const species=match?cleanupName(match[2].replace(/[^\p{L}\p{M}.'’\-\s♂♀0-9]/gu,'')):null;
     const natureWords=fieldWords(row,...cfg.nature,0,1);
-    const nature=normalized(join(natureWords)).replace(/[^\p{L}\s]/gu,'').trim();
+    const rawNature=normalized(join(natureWords)).replace(/[^\p{L}\s]/gu,'').trim();
+    const nature=fuzzyNature(rawNature)||rawNature;
     const priceWords=fieldWords(row,...cfg.price,0,1);
     const rawPrice=join(priceWords);
     const price=parseMoney(rawPrice);
     const priceReliable=!!price&&priceWords.length>0&&priceWords.every(w=>w.conf>=60);
-    const ivs=[];
+    const ivs=[],ivConf=[];
     for(let j=0;j<6;j++){
-      const x=cfg.ivStart+j*cfg.ivStep;
-      const col=fieldWords(row,x,x+cfg.ivWidth,0,1);
+      const center=ivCenters[j];
+      const col=fieldWords(row,center-cfg.ivWidth/2,center+cfg.ivWidth/2,0,1);
       const str=join(col).replace(/[^\d]/g,'');
       const v=/^\d{1,2}$/.test(str)&&col.length>0&&col.every(w=>w.conf>=55)?Number(str):null;
       ivs.push(v!==null&&v<=31?v:null);
+      ivConf.push(col.length?Math.min(...col.map(w=>w.conf)):0);
     }
     const genderRaw=join(fieldWords(row,...cfg.sex,0,1));
     const sex=/♀/.test(genderRaw)?'F':/♂/.test(genderRaw)?'M':'?';
     const age=join(fieldWords(row,...cfg.age,0,1));
-    const entry={species,level,nature,sex,price,ivs,age,rank:i+1};
+    const entry={species,level,nature,sex,price,ivs,age,rank:i+1,ivConf};
     const nameReliable=!!match&&nameWords.some(w=>w.conf>=55&&/\p{L}{3,}/u.test(w.text));
-    const natureReliable=natureWords.length>0&&natureWords.every(w=>w.conf>=55)&&NATURES.has(nature);
+    const natureReliable=natureWords.length>0&&natureWords.every(w=>w.conf>=50)&&NATURES.has(nature);
     const missingFields=[
       ...(!species||!nameReliable?['ESPECIE']:[]),
       ...(!Number.isInteger(level)||level<1||level>100?['NIVEL']:[]),
@@ -189,16 +215,10 @@ function parseScreen(data,width,height,options={}) {
     kind:'panel',panel,frameWidth:rect.fullWidth,frameHeight:rect.fullHeight,
     firstRowUnits:grid.top,stepUnits:grid.step,rightUnits:1.015
   }:overlayLayout(words);
-  const byRank=new Map([...rows,...partialRows].map(r=>[r.rank,r]));
-  const diagnosticRows=Array.from({length:10},(_,i)=>{
-    const r=byRank.get(i+1);
-    return {rank:i+1,species:r?.species||'—',level:r?.level??null,
-      nature:r?.nature||null,price:r?.price??null,
-      ivs:r?.ivs||Array(6).fill(null),
-      state:r?.ocrReliable?'complete':r?'partial':'missing',
-      missingFields:r?.ocrReliable?[]:r?.missingFields||['FILA_SIN_TEXTO']};
-  });
-  return {...base,rows,partialRows,diagnosticRows,grid,layout};
+  const diagnosticRows=diagnosticRowsFor(rows,partialRows);
+  const cells=isPanel?{panel,crop:rect,ivCenters,ivHalf:cfg.ivStep*.42,
+    rowCenters:Array.from({length:10},(_,i)=>grid.top+i*grid.step),rowHalf:.0115}:null;
+  return {...base,rows,partialRows,diagnosticRows,grid,layout,cells};
 }
 function panelRowGrid(words) {
   const buys=words.filter(w=>normalized(w.text)==='comprar'&&w.x>.85&&w.x<1.01&&w.y>.13&&w.y<.65)
@@ -237,7 +257,9 @@ async function createRecognizer(){
   },async analyze(image,width,height,options={}) {
     const result=await worker.recognize(image,{}, {blocks:true,text:true});
     let parsed=parseScreen(result.data,width,height,options);
-    if(parsed.gtl && !parsed.advanced && !parsed.ownListings && parsed.rows.length<10){
+    // In panel mode the missing cells are recovered by colour, learned digits
+    // and a digits-only OCR per cell (much faster than a second full pass).
+    if(!parsed.cells && parsed.gtl && !parsed.advanced && !parsed.ownListings && parsed.rows.length<10){
       // A second segmentation pass can recover whole rows; never stitch IVs
       // from different readings or use a partial row as a confirmed offer.
       try{
@@ -248,6 +270,21 @@ async function createRecognizer(){
       }finally{await worker.setParameters({tessedit_pageseg_mode:PSM.SPARSE_TEXT});}
     }
     return parsed;
+  },async readDigits(images){
+    const out=[];
+    if(!images.length)return out;
+    await worker.setParameters({tessedit_pageseg_mode:PSM.SINGLE_LINE,tessedit_char_whitelist:'0123456789'});
+    try{
+      for(const png of images){
+        const r=await worker.recognize(png);
+        const text=String(r.data.text||'').replace(/\D/g,'');
+        const v=/^\d{1,2}$/.test(text)&&Number(r.data.confidence||0)>=60?Number(text):null;
+        out.push(v!==null&&v<=31?v:null);
+      }
+    }finally{
+      await worker.setParameters({tessedit_pageseg_mode:PSM.SPARSE_TEXT,tessedit_char_whitelist:''});
+    }
+    return out;
   },close:()=>worker.terminate()};
 }
-module.exports={parseScreen,parseMoney,parseBalanceText,flattenWords,cleanWords,createRecognizer,normalized,overlayLayout,isGtlHeader};
+module.exports={fuzzyNature,parseScreen,parseMoney,parseBalanceText,flattenWords,cleanWords,createRecognizer,normalized,overlayLayout,isGtlHeader};

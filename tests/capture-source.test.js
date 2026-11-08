@@ -191,3 +191,22 @@ test('Windows physical coordinates become DIP before positioning overlay at 125 
   await api.capture();
   assert.deepEqual(api.getGameRect(),{x:0,y:0,width:1536,height:864});
 });
+
+test('prefers the sharpest fast engine over slower PowerShell captures',async()=>{
+  const small=image(true,1536,816),big=image(true,1920,1080);
+  let nativeCalls=0;
+  const api=createGameCapture({
+    desktopCapturer:{getSources:async opts=>opts.types[0]==='window'?[]:[{display_id:'11',thumbnail:big}]},
+    screen:{getAllDisplays:()=>[{id:11,bounds,scaleFactor:1}],getDisplayMatching:()=>({id:11,bounds,scaleFactor:1})},
+    locateWindow:async()=>null,inspectThumbnail:inspect,
+    nativeCapture:async()=>{nativeCalls++;return {image:small,rect,code:'PRINT-OK',detail:'OK'};},
+    locateGtlPanel:()=>({x:20,y:30,width:900,height:600})
+  });
+  const result=await api.probeAll();
+  assert.equal(result.selected,'electron-visual');
+  // A stored PowerShell preference no longer goes before the fast engines.
+  api.preferEngine('win-print');
+  nativeCalls=0;
+  assert.equal((await api.capture(true)).via,'electron-visual');
+  assert.equal(nativeCalls,0);
+});

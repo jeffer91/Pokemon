@@ -109,8 +109,14 @@ function createGameCapture({desktopCapturer,screen,locateWindow,inspectThumbnail
       let displays,sources;
       try{
         displays=screen.getAllDisplays();
-        sources=await desktopCapturer.getSources({types:['screen'],thumbnailSize:
-          {width:1920,height:1080}});
+        // Request the PHYSICAL monitor resolution. A fixed 1920x1080 thumbnail
+        // shrinks the GTL on scaled or larger monitors and blurs every digit.
+        const physical=displays.reduce((best,d)=>{
+          const f=d.scaleFactor||1;
+          return {width:Math.max(best.width,Math.ceil((d.bounds?.width||0)*f)),
+            height:Math.max(best.height,Math.ceil((d.bounds?.height||0)*f))};
+        },{width:1920,height:1080});
+        sources=await desktopCapturer.getSources({types:['screen'],thumbnailSize:physical});
       }catch(e){return fail('VIS-ERROR',String(e.message||e));}
       const candidates=[];
       for(const src of sources){
@@ -171,11 +177,16 @@ function createGameCapture({desktopCapturer,screen,locateWindow,inspectThumbnail
     return {result,record};
   }
   function winner(results){
-    // Prefer validated GTL captures, then window-specific capture.
+    // Prefer validated GTL captures, then fast (non-PowerShell) engines, then the
+    // sharpest frame: OCR accuracy depends on real pixels, not on the window API.
     const priority=id=>({'electron-window':5,'electron-win32':4,'electron-visual':3,
       'win-gdi':2,'win-print':1}[id]||0);
+    const native=id=>id.startsWith('win-')?1:0;
+    const area=r=>{try{const s=r.result.image.getSize();return s.width*s.height;}catch{return 0;}};
     return results.filter(r=>r.result.image).sort((a,b)=>
       Number(b.record.gtl)-Number(a.record.gtl)||
+      native(a.record.id)-native(b.record.id)||
+      area(b)-area(a)||
       priority(b.record.id)-priority(a.record.id)||
       a.record.ms-b.record.ms)[0]||null;
   }
@@ -214,8 +225,11 @@ function createGameCapture({desktopCapturer,screen,locateWindow,inspectThumbnail
     // GDI captures independently of Electron/title; PrintWindow is last
     // because some GPU renderers return an empty frame.
     const backup=['win-gdi','win-print'];
-    const tries=selected?[selected,...fast.filter(id=>id!==selected),
-      ...backup.filter(id=>id!==selected)]:[...fast,...backup];
+    // A slow PowerShell engine never goes before the fast ones: it is only a
+    // fallback, even if an earlier session stored it as the preferred engine.
+    const preferredFast=selected&&fast.includes(selected)?selected:null;
+    const tries=[...(preferredFast?[preferredFast]:[]),...fast.filter(id=>id!==preferredFast),
+      ...(selected&&backup.includes(selected)?[selected]:[]),...backup.filter(id=>id!==selected)];
     let errors=[],allowedNative=false;
     // Avoid invoking a multi-second PowerShell process on each idle frame.
     // Manual tests still exercise every engine independently.

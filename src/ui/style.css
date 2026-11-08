@@ -97,3 +97,12 @@ nav{flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden;scrollbar-width:thin;whit
 #ocr-detail-rows td{font-size:11px;white-space:nowrap}
 #ocr-detail-rows td:last-child{max-width:240px;white-space:normal;overflow-wrap:anywhere;text-align:left}
 #ocr-detail-count{font-size:11px}
+
+/* v0.9: use the whole window width; grids add columns as space grows. */
+main{max-width:none;width:100%;padding:18px clamp(16px,2.5vw,40px) 32px}
+nav{flex-wrap:wrap;overflow:visible;white-space:normal}
+.tab{flex:1 1 auto;min-width:96px}
+.scroll{max-height:min(62vh,640px)}
+.team-grid,.catalog-grid{grid-template-columns:repeat(auto-fill,minmax(300px,1fr))}
+.metrics{grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}
+#ocr-detail-rows td:last-child{max-width:none}

@@ -46,14 +46,18 @@ function renderData(data){
   renderCompetitive(data.competitive||[]);
   renderProjects(data.projects||[]);
   renderActivity(s.activity||[]);
-  $('radar-tip').textContent=(s.trusted||0)+' precios verificados · '+(s.unverified||0)+
-    ' pendientes · REV sin nota cuando faltan comparables · CRI* indica potencial por IV, no compatibilidad de crianza.';
+  $('radar-tip').textContent=(s.total||0)+' anuncios leídos · Puntaje 0–10: calidad frente al ideal + ganancia neta '+
+    '(precio de reventa estimado − precio − cuota 1.000). Con 7 o más y dentro de presupuesto: COMPRAR. '+
+    'El precio de reventa sale de anuncios vistos, no de ventas confirmadas.';
 
   const listings=$('listings');listings.replaceChildren();
   for(const row of (data.recent||[]).slice(0,8)){
     const tr=document.createElement('tr');
-    for(const value of [row.species+' · Nv. '+row.level,row.ivs?.filter(x=>x===31).length+'×31',Number.isFinite(row.ivQuality)?row.ivQuality.toFixed(1)+'/10':'—',
-      Number.isFinite(row.revQuality)?row.revQuality.toFixed(1):'—',Number.isFinite(row.criQuality)?row.criQuality.toFixed(1):'—',currency(row.price)]){
+    const label={COMPRAR:'COMPRAR',NO_COMPRAR:'No comprar',SILENCIO:'Aprendiendo'}[row.decision]||'—';
+    for(const value of [row.species+' · Nv. '+row.level,row.ivs?.filter(x=>x===31).length+'×31',
+      Number.isFinite(row.revQuality)?row.revQuality.toFixed(1)+'/10':'—',
+      Number.isFinite(row.netEstimate)?currency(row.netEstimate):'—',
+      label+(row.reasonText?' · '+row.reasonText:''),currency(row.price)]){
       const td=document.createElement('td');td.textContent=value;tr.append(td);
     }listings.append(tr);
   }

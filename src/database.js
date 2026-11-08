@@ -243,6 +243,14 @@ function openDatabase(folder) {
     return db.prepare('SELECT * FROM listings WHERE verified=1 AND lower(species)=lower(?) AND last_seen >= ? ORDER BY last_seen DESC LIMIT 250')
       .all(species,Date.now()-7*86_400_000).map(r=>({...r, ivs:JSON.parse(r.ivs_json),lastSeen:r.last_seen}));
   }
+  // Every well-formed OCR listing of the species (verified or not) for the
+  // class-based resale estimate. Each fingerprint is one distinct ad.
+  const samplesQuery=db.prepare(`SELECT fingerprint,species,level,nature,sex,price,ivs_json,last_seen,verified
+    FROM listings WHERE species=? COLLATE NOCASE AND last_seen>=? ORDER BY last_seen DESC LIMIT 600`);
+  function marketSamples(species,now=Date.now()){
+    return samplesQuery.all(String(species||''),now-7*86_400_000)
+      .map(r=>({...r,ivs:JSON.parse(r.ivs_json),lastSeen:r.last_seen}));
+  }
   const recentDecision=db.prepare(`SELECT timestamp FROM recommendations
     WHERE fingerprint=? AND decision=? AND reason=? ORDER BY id DESC LIMIT 1`);
   const insertDecision=db.prepare(`INSERT INTO recommendations
@@ -406,7 +414,7 @@ function openDatabase(folder) {
   async function saveBackup(){const dest=path.join(folder,'backups');fs.mkdirSync(dest,{recursive:true});
     const file=path.join(dest,`pokeradar-${new Date().toISOString().slice(0,10)}.sqlite`);
     if(!fs.existsSync(file)) await backup(db,file);return file;}
-  return {db,filename,recordOwnListings,ownListings,settings:getSettings,applySettings,recordListings,recordMarketScan,candidates,targetPrices,marketIntelligence,catalogProfiles,recordRecommendation,
+  return {db,filename,recordOwnListings,ownListings,settings:getSettings,applySettings,recordListings,recordMarketScan,candidates,marketSamples,targetPrices,marketIntelligence,catalogProfiles,recordRecommendation,
     recordBalance,latestBalance,recent,history,stats,summary,addTransaction,transactionHistory,saveBackup,
     competitiveProfiles,projects,createProject,updateProject,close:()=>db.close()};
 }

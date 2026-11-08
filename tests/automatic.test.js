@@ -10,7 +10,7 @@ test('Play no exige configurar una cuota ni marcar una casilla',()=>{
   const main=read('src/main.js');
   assert.doesNotMatch(main,/if\s*\(!storage\.settings\(\)\.consentConfirmed\)/);
   assert.match(main,/ipcMain\.handle\('radar:play'/);
-  assert.match(main,/evaluate\(p,storage\.candidates\(row\.species\),\{balance\}\)/);
+  assert.match(main,/assess\(\{\.\.\.row,fingerprint:identity\(row\)\},samplesFor\(row\.species\),options\)/);
 });
 test('Ajustes oculta coordenadas y cuota manuales',()=>{
   const html=read('src/ui/index.html');

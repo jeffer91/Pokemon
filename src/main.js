@@ -3,7 +3,8 @@ const {app,BrowserWindow,desktopCapturer,ipcMain,screen,clipboard,nativeImage}=r
 const path=require('node:path');
 const crypto=require('node:crypto');
 const {openDatabase,identity}=require('./database');
-const {evaluate}=require('./market');
+const {assess}=require('./brain');
+const {PRIORITY_PROFILES}=require('./priority-profiles');
 const {createRecognizer}=require('./recognition');
 const {locateWindow,captureNative}=require('./window-locator');
 const {nextDelay,region,shouldCheckHeader}=require('./scan-policy');
@@ -11,15 +12,29 @@ const {inspectThumbnail,locateGtlPanel,inferGtlSexes}=require('./frame-health');
 const {createDiagnostics}=require('./diagnostics');
 const {createGameCapture}=require('./capture-source');
 const {sameVisibleOffers}=require('./page-identity');
-const {profileList,coverage,grade,ivScore,validateOverrides}=require('./team');
+const {profileList,coverage,grade,validateOverrides}=require('./team');
+const fs=require('node:fs');
+const {createDigitBook,refineScan,applyDigitReads}=require('./cell-reader');
 
 if(!app.requestSingleInstanceLock())app.quit();
+// The overlay plays a short alert when a bargain appears, without a click.
+app.commandLine.appendSwitch('autoplay-policy','no-user-gesture-required');
 let dashboard,overlay,storage,recognizer,scanTimer,backupTimer,diagnostics,captureAgent,engineTesting=false;
 let sessionActive=false,sessionVersion=0,working=false,mode='idle';
 let headerHash='',tableHash='',lastHeaderCheckedAt=0,lastTableCheckedAt=0,lastBalanceReadAt=0,
   lastPublished=0,lastOverlayBounds='',startedAt=0,ocrFailures=0,emptyReads=0;
 let lastDisplayedRows=null,lastDisplayedLayout=null,lastPageSignature='',lastMarketImage=null;
 let marketCache=null,marketCacheAt=0;
+let digitBook=createDigitBook(),digitBookFile=null,lastReadStats=null;
+function loadDigitBook(folder){
+  digitBookFile=path.join(folder,'digit-templates.json');
+  try{digitBook=createDigitBook(JSON.parse(fs.readFileSync(digitBookFile,'utf8')));}
+  catch{digitBook=createDigitBook();}
+}
+function saveDigitBook(){
+  if(!digitBookFile||!digitBook.changed())return;
+  try{fs.writeFileSync(digitBookFile,JSON.stringify(digitBook.toJSON()));digitBook.markSaved();}catch{}
+}
 let status={state:'inactivo',message:'Pulsa Play para iniciar.',running:false,recognized:0,latency:null};
 function broadcast(channel,payload){
   for(const w of [dashboard,overlay])if(w&&!w.isDestroyed())w.webContents.send(channel,payload);
@@ -35,7 +50,7 @@ function protect(win){
 }
 function createWindows(){
   dashboard=new BrowserWindow({
-    width:790,height:650,minWidth:650,minHeight:520,show:false,
+    width:1280,height:820,minWidth:650,minHeight:520,show:false,
     title:'PokéRadar GTL',backgroundColor:'#f7f9fc',
     webPreferences:{preload:path.join(__dirname,'preload.js'),contextIsolation:true,nodeIntegration:false,sandbox:false}
   });
@@ -84,7 +99,7 @@ async function showResults(rows,version,layout=null){
   if(!sessionActive||sessionVersion!==version)return;
   if(!game)return showCompact();
   const scale=1; // Automatic positioning; previous manually stored offsets are ignored.
-  const width=Math.round(210*scale);
+  const width=Math.round(232*scale);
   const auto=layout && Number.isFinite(layout.firstRowTopNorm) ? layout : null;
   const pixel=layout?.kind==='panel' && layout.panel && layout.frameWidth>0 && layout.frameHeight>0?
     layout:null;
@@ -114,16 +129,21 @@ async function showResults(rows,version,layout=null){
   lastDisplayedRows=rows;lastDisplayedLayout=layout;
   place(bounds);
 }
+function brainOptions(){
+  const fee=storage.settings().listingFee;
+  return {profiles:PRIORITY_PROFILES,balance:storage.latestBalance(),fee:Number.isSafeInteger(fee)?fee:null};
+}
 function recentEvaluated(profiles){
-  const recent=storage.recent().slice(0,15),balance=storage.latestBalance();
+  const recent=storage.recent().slice(0,15),options=brainOptions();
   const cache=new Map();
   return recent.map(row=>{
     const species=String(row.species||'').toLowerCase();
-    if(!cache.has(species))cache.set(species,storage.candidates(row.species));
-    const ev=evaluate(row,cache.get(species),{balance});
+    if(!cache.has(species))cache.set(species,storage.marketSamples(row.species));
+    const ev=assess({...row,fingerprint:identity(row)},cache.get(species),options);
     const p=profiles.find(p=>p.searchSpecies.toLowerCase()===species);
     const q=grade(row,ev,p);
-    return {...row,ivQuality:q.iv,revQuality:q.rev,criQuality:q.cri,fitQuality:q.fit};
+    return {...row,ivQuality:q.iv,revQuality:ev.score,criQuality:q.cri,fitQuality:q.fit,
+      decision:ev.decision,reasonText:ev.reasonText,netEstimate:ev.netEstimate??null};
   });
 }
 function publishData(force=false){
@@ -301,12 +321,30 @@ async function tick(){
     const ocrStart=performance.now();
     const enlarged=marketImage.resize({width:rect.width*2,quality:'best'});
     const enlargedSize=enlarged.getSize();
-    const res=await recognizer.analyze(enlarged.toPNG(),enlargedSize.width,enlargedSize.height,{
+    let res=await recognizer.analyze(enlarged.toPNG(),enlargedSize.width,enlargedSize.height,{
       gtlConfirmed:visibleGtl,
       panel:panel||undefined,
       crop:rect
     });
     ocrFailures=0;
+    if(res.cells&&!res.ownListings&&!res.advanced){
+      // Smart IV pass: green = 31, learned digits, then digits-only OCR per cell.
+      const refined=refineScan(res,{bitmap:enlarged.toBitmap(),
+        width:enlargedSize.width,height:enlargedSize.height},digitBook);
+      res=refined.parsed;
+      let cellOcr=0;
+      const pending=refined.pending.slice(0,14);
+      if(pending.length){
+        const crops=pending.map(p=>enlarged.crop(p.rect).resize({height:Math.max(40,p.rect.height),quality:'best'}).toPNG());
+        const values=await recognizer.readDigits(crops);
+        const reads=pending.map((p,i)=>({rank:p.rank,j:p.j,value:values[i]})).filter(r=>r.value!==null);
+        cellOcr=reads.length;
+        res=applyDigitReads(res,reads,{allow31:!refined.stats.anyGreen});
+      }
+      lastReadStats={...refined.stats,cellOcr,templates:digitBook.size()};
+      saveDigitBook();
+      if(!sessionActive||version!==sessionVersion)return;
+    }
     if(!sessionActive||version!==sessionVersion)return;
     const ocrTime=Math.round(performance.now()-ocrStart);
     if(res.ownListings){
@@ -336,9 +374,13 @@ async function tick(){
     if(!rowsStillMatch){
       lastDisplayedRows=null;lastPageSignature='';
     }
-    diagnostics?.setOcrRows(res.diagnosticRows||[],(res.sort||'unknown')+' · '+(capture.via||'captura'));
+    diagnostics?.setOcrRows(res.diagnosticRows||[],(res.sort||'unknown')+' · '+(capture.via||'captura')+
+      (lastReadStats?' · verde '+lastReadStats.color+', plantillas '+lastReadStats.template+
+        ', celdas '+lastReadStats.cellOcr+', corregidos '+lastReadStats.corrected+
+        ', dígitos aprendidos '+lastReadStats.templates+'/10':''));
     broadcast('radar:diagnostics',diagnostics?.snapshot());
     const balance=storage.latestBalance();
+    const bargains=[];
     emptyReads=rows.length?0:emptyReads+1;
     track('ocr',rows.length===10?'ok':emptyReads>=3?'error':'warn',
       rows.length===10?'OCR-OK':rows.length?'OCR-PARCIAL':'OCR-001',
@@ -346,36 +388,28 @@ async function tick(){
       ' palabras · detalle por fila en Diagnóstico',ocrTime);
     stage='engine';
     const decisions=[];
-    const profiles=profileList(storage.settings().teamOverrides);
-    const profileFor=row=>profiles.find(p=>p.searchSpecies.toLowerCase()===
-      String(row.species||'').toLowerCase())||null;
-    const explain=reason=>({
-      RESERVA_30_POR_CIENTO:'Fuera de tu presupuesto',
-      MARGEN_INSUFICIENTE:'Margen insuficiente',
-      DESCUENTO_Y_MARGEN:'Precio favorable',
-      MUESTRA_INSUFICIENTE:'Faltan precios fiables',
-      SEXO_NO_VERIFICADO:'Sexo sin confirmar',
-      SALDO_NO_CONFIRMADO:'Saldo por confirmar',
-      LECTURA_INCOMPLETA:'Lectura incompleta',
-      PRECIO_NO_LEIDO:'Precio sin leer'
-    })[reason]||'Datos pendientes';
+    const options=brainOptions();
+    const sampleCache=new Map();
+    const samplesFor=species=>{
+      const k=String(species||'').toLowerCase();
+      if(!sampleCache.has(k))sampleCache.set(k,storage.marketSamples(species));
+      return sampleCache.get(k);
+    };
+    const pick=row=>({rank:row.rank,species:row.species,price:row.price,
+      level:row.level,nature:row.nature,ivs:row.ivs});
     for(const row of rows){
-      const p={...row,fingerprint:identity(row)};
-      const ev=evaluate(p,storage.candidates(row.species),{balance});
-      decisions.push({rank:row.rank,species:row.species,price:row.price,
-        level:row.level,nature:row.nature,ivs:row.ivs,
-        ...ev,...grade(row,ev,profileFor(row)),reasonText:explain(ev.reason)});
+      const ev=assess({...row,fingerprint:identity(row)},samplesFor(row.species),options);
+      decisions.push({...pick(row),...ev});
     }
-    // Incomplete rows are shown as pending, except for certain budget exclusions.
+    // Incomplete rows stay pending, except for clear budget exclusions.
     for(const row of partials){
       if(decisions.some(d=>d.rank===row.rank))continue;
       const ev=row.priceReliable&&Number.isSafeInteger(row.price)?
-        evaluate(row,[],{balance}):{decision:'SILENCIO',reason:'LECTURA_INCOMPLETA'};
-      decisions.push({rank:row.rank,species:row.species,price:row.price,
-        level:row.level,nature:row.nature,ivs:row.ivs,
-        ...ev,...grade(row,ev,profileFor(row)),reasonText:explain(ev.reason)});
+        assess(row,[],options):{decision:'SILENCIO',reason:'LECTURA_INCOMPLETA',reasonText:'Lectura incompleta',score:null};
+      decisions.push({...pick(row),...ev});
     }
     const actionable=decisions.filter(d=>d.decision!=='SILENCIO').length;
+    for(const d of decisions)if(d.decision==='COMPRAR')bargains.push(d);
     track('engine',balance===null?'warn':'ok',balance===null?'ECO-001':'ECO-OK',
       balance===null?'Saldo no reconocido; puntuación IV disponible':
         'Evaluadas '+rows.length+' ofertas; '+actionable+' decisiones');
@@ -442,7 +476,8 @@ async function tick(){
     }
     setStatus({state:'activo',
       message:rows.length+'/10 leídos · '+saved.saved+' guardados'+
-        (actionable?' · '+actionable+' decisiones':' · recopilando precios'),
+        (bargains.length?' · ¡'+bargains.length+' ganga'+(bargains.length>1?'s':'')+'!':
+          actionable?' · '+actionable+' decisiones':' · recopilando precios'),
       recognized:rows.length,latency:Math.round(performance.now()-start)});
   }catch(error){
     if(!sessionActive||version!==sessionVersion)return;
@@ -577,6 +612,7 @@ app.whenReady().then(async()=>{
   // Previous installations must not restart capture without Play.
   if(storage.settings().captureEnabled)storage.applySettings({captureEnabled:false});
   diagnostics=createDiagnostics(app.getPath('userData'));
+  loadDigitBook(app.getPath('userData'));
   captureAgent=createGameCapture({desktopCapturer,screen,locateWindow,inspectThumbnail,
     nativeCapture:mode=>captureNative(mode,nativeImage),locateGtlPanel});
   captureAgent.preferEngine(storage.settings().captureEngine);

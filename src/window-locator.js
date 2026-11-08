@@ -32,7 +32,16 @@ public static class RadarWindow {
   }
   [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr hWnd,out RECT rect);
   [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr hWnd,ref POINT point);
+  [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+  [DllImport("user32.dll")] public static extern IntPtr SetThreadDpiAwarenessContext(IntPtr ctx);
+  // Without DPI awareness Windows virtualizes coordinates and bitmaps: at 125 %
+  // a 1920x1080 game arrives as 1536x816 and the OCR reads blurred digits.
+  public static void Aware(){
+    try{ if(SetThreadDpiAwarenessContext(new IntPtr(-4))!=IntPtr.Zero)return; }catch{}
+    try{ SetProcessDPIAware(); }catch{}
+  }
   public static string Get() {
+    Aware();
     string result="";
     EnumWindows((hwnd,arg)=> {
       if (!IsWindowVisible(hwnd)) return true;
@@ -107,6 +116,14 @@ public static class RadarNative {
   [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr h,out RECT r);
   [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr h,ref POINT p);
   [DllImport("user32.dll",SetLastError=true)] public static extern bool PrintWindow(IntPtr h,IntPtr dc,uint flags);
+  [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+  [DllImport("user32.dll")] public static extern IntPtr SetThreadDpiAwarenessContext(IntPtr ctx);
+  // Without DPI awareness Windows virtualizes coordinates and bitmaps: at 125 %
+  // a 1920x1080 game arrives as 1536x816 and the OCR reads blurred digits.
+  public static void Aware(){
+    try{ if(SetThreadDpiAwarenessContext(new IntPtr(-4))!=IntPtr.Zero)return; }catch{}
+    try{ SetProcessDPIAware(); }catch{}
+  }
   public static IntPtr Find(out RECT rect,out POINT pt) {
     IntPtr found=IntPtr.Zero;
     RECT temp=new RECT(); POINT origin=new POINT();
@@ -123,6 +140,7 @@ public static class RadarNative {
   }
 }
 '@
+[RadarNative]::Aware()
 try {
   $r=[RadarNative+RECT]::new()
   $pt=[RadarNative+POINT]::new()
