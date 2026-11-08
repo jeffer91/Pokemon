@@ -153,6 +153,16 @@ $('play').addEventListener('click',async()=>{
   try{await window.radar.play();window.radar.minimize();}
   catch(e){notice('No se pudo iniciar el radar. Revisa Diagnóstico.');navigate('diagnostico');}
 });
+window.radar.version?.().then(v=>{$('app-version').textContent='GTL · v'+v;document.title='PokéRadar v'+v;}).catch(()=>{});
+$('trade-form').addEventListener('submit',async e=>{
+  e.preventDefault();
+  try{
+    await window.radar.addTrade({species:$('tf-species').value,level:$('tf-level').value,nature:$('tf-nature').value,
+      ivs:$('tf-ivs').value,price:$('tf-price').value,alfa:$('tf-alfa').checked});
+    for(const id of ['tf-species','tf-level','tf-nature','tf-ivs','tf-price'])$(id).value='';
+    $('tf-alfa').checked=false;notice('Compra añadida.');
+  }catch(err){notice(String(err.message||err).replace(/^Error invoking remote method '[^']+': (Error: )?/,''));}
+});
 $('learn').addEventListener('click',async()=>{
   notice('');
   try{await window.radar.learn();window.radar.minimize();}

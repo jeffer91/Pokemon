@@ -45,6 +45,8 @@ function judge(row,m){
   const missing=new Set(row.missingFields||[]);
   if(!row.species||missing.has('ESPECIE'))return {state:'reading',text:'Leyendo especie…'};
   if(speciesKey(row.species)!==speciesKey(m.species))return {state:'no',text:'Otra especie: '+row.species};
+  // Missions learn normal Pokémon; Alfa/Variocolor/Partículas are saved apart.
+  if(row.variant&&row.variant!=='normal')return {state:'no',text:'Es '+row.variant+': precio aparte (guardado)'};
   if(m.nature){
     if(!row.nature||missing.has('NATURALEZA'))return {state:'reading',text:'Leyendo naturaleza…'};
     if(normalizedNature(row.nature)!==normalizedNature(m.nature))return {state:'no',text:'Naturaleza '+row.nature};

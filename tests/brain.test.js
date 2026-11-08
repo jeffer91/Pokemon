@@ -59,7 +59,7 @@ test('budget and missing data are explained, never guessed',()=>{
   const peers=[22000,24000,25000].map((p,i)=>gible(p,undefined,{fingerprint:'b'+i}));
   assert.equal(assess(gible(9000),peers,{...opts,balance:10000}).reason,'RESERVA_30_POR_CIENTO');
   const empty=assess(gible(9000),[],opts);
-  assert.equal(empty.decision,'SILENCIO');
+  assert.equal(empty.decision,'NO_COMPRAR');
   assert.equal(empty.reason,'MUESTRA_INSUFICIENTE');
   assert.equal(empty.score,3.5);
   assert.equal(assess(gible(9000),peers,{...opts,balance:null}).reason,'SALDO_NO_CONFIRMADO');
@@ -72,9 +72,7 @@ test('6×31 prices never inflate a 5×31, and level does not split classes',()=>
   const six=[31,31,31,31,31,31],five=[31,31,31,31,31,20];
   const peers=[654222,666666,790000,800000].map((p,i)=>g(p,six,1,'s'+i));
   const r=assess(g(525000,five,1,'x'),peers,{...opts,balance:5_000_000});
-  assert.equal(r.tier,'species');
-  assert.ok(r.resale<525000,'the 6×31 prices are scaled down for a 5×31');
-  assert.notEqual(r.decision,'COMPRAR');
+  assert.equal(r.reason,'MUESTRA_INSUFICIENTE','6×31 ads are not "equal" to a 5×31');
   const lv=assess(g(30000,five,1,'y'),[60000,61000,62000].map((p,i)=>g(p,five,100,'l'+i)),{...opts,balance:5_000_000});
   assert.equal(lv.tier,'exact','level 100 ads are comparables for a level 1');
 });
@@ -86,31 +84,36 @@ test('junk is rejected at once, without waiting for prices',()=>{
   assert.equal(r.reasonText,'Sin valor de reventa');
 });
 
-test('a species estimate needs a bigger margin and discount than an exact class',()=>{
-  const {learnMultipliers}=require('../src/brain');
-  const z=(price,ivs,f,nature='timida')=>({species:'Zorua',level:20,nature,sex:'M',price,ivs,lastSeen:now-1000,fingerprint:f});
-  // Only 1×31 Zorua seen: a 3×31 is estimated from them, scaled by 31 count.
+test('rough estimates never recommend a buy: only equal Pokémon count',()=>{
+  const z=(price,ivs,f)=>({species:'Zorua',level:20,nature:'timida',sex:'M',price,ivs,lastSeen:now-1000,fingerprint:f});
   const peers=[8000,9000,10000].map((p,i)=>z(p,[31,1,2,3,4,5],'p'+i));
-  const m=[1,1.15,1.6,2.6,4.5,8,15];
-  const cheap=assess(z(4000,[31,31,31,4,5,6],'c'),peers,{...opts,multipliers:m});
-  assert.equal(cheap.tier,'species');
-  assert.equal(cheap.decision,'COMPRAR');
-  assert.match(cheap.reasonText,/estimado por especie/);
-  const thin=assess(z(16000,[31,31,31,4,5,6],'d'),peers,{...opts,multipliers:m});
-  assert.notEqual(thin.decision,'COMPRAR','a few thousand under a rough estimate is not enough');
-  // Multipliers never decrease and fall back to defaults with little data.
-  const learned=learnMultipliers(peers);
-  for(let t=1;t<7;t++)assert.ok(learned[t]>=learned[t-1]);
-});
-
-test('a base form is priced from its evolution when it has no data of its own',()=>{
+  const r=assess(z(4000,[31,31,31,4,5,6],'c'),peers,opts);
+  assert.equal(r.decision,'NO_COMPRAR');
+  assert.equal(r.reason,'MUESTRA_INSUFICIENTE');
+  // A base form is never bought on its evolution's prices either.
   const lit={species:'Litwick',level:1,nature:'modesta',sex:'M',price:2500,ivs:[31,1,2,31,4,31],fingerprint:'l'};
   const chand=[26000,28000,30000,32000].map((p,i)=>({species:'Chandelure',level:50,nature:'modesta',sex:'M',price:p,
     ivs:[31,1,2,31,4,31],lastSeen:now-1000,fingerprint:'c'+i}));
-  const r=assess(lit,[],{...opts,lineSamples:chand});
-  assert.equal(r.tier,'line');
-  assert.ok(r.resale>=10000&&r.resale<=14000,'≈45 % of Chandelure');
-  assert.equal(r.decision,'COMPRAR');
+  assert.notEqual(assess(lit,[],{...opts,lineSamples:chand}).decision,'COMPRAR');
+});
+
+test('the Krookodile case: useless 31s and Alfa variant are never mixed',()=>{
+  const k=(price,nature,ivs,f,variant)=>({species:'Krookodile',level:60,nature,sex:'F',price,ivs,variant,lastSeen:now-1000,fingerprint:f});
+  // What the brain knew: one firme Atk-31 at 50.000 plus expensive ones.
+  const known=[k(50000,'firme',[11,31,13,14,26,30],'a'),k(60000,'cauta',[31,3,14,31,31,30],'b'),k(68000,'serena',[27,20,23,31,31,31],'c')];
+  const mine=k(10000,'cauta',[25,18,14,31,23,31],'mine');
+  const r=assess(mine,known,{...opts,balance:43800});
+  assert.notEqual(r.decision,'COMPRAR','the bad recommendation can no longer happen');
+  // Normal ads with the same useful 31s (Velocidad only, At. Esp. is useless).
+  const normals=[k(8888,'ingenua',[1,11,21,31,11,31],'n1'),k(9800,'afable',[6,6,1,31,5,31],'n2'),k(9000,'docil',[1,2,3,4,5,31],'n3')];
+  assert.notEqual(assess(mine,normals,{...opts,balance:43800}).decision,'COMPRAR');
+  // An Alfa is only compared with Alfas.
+  const alfa={...mine,variant:'alfa'};
+  assert.equal(assess(alfa,normals,{...opts,balance:43800}).reason,'MUESTRA_INSUFICIENTE');
+  const alfas=[k(16888,'placida',[24,7,31,31,24,15],'x1','alfa'),k(17000,'hurana',[29,12,4,31,31,28],'x2','alfa'),
+    k(18888,'picara',[0,25,31,29,8,31],'x3','alfa')];
+  const {classKeys}=require('../src/brain');
+  assert.notEqual(classKeys(alfa,PRIORITY_PROFILES).exact,classKeys(mine,PRIORITY_PROFILES).exact);
 });
 
 test('absurd asking prices never create a fake bargain (real Sneasel data)',()=>{

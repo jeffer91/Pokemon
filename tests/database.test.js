@@ -36,7 +36,7 @@ test('SQLite v2 retains verified listings and records partial OCR without mixing
   const scan=db.recordMarketScan({rows:[{...p(),rank:4}],partialRows:[{rank:5,species:'Gible',price:12000,ivs:[31,null,null,null,null,null],missing:'IV_INCOMPLETOS'}],context:'GTL|newest',sort:'newest',wordCount:65,imageHash:'abc'});
   assert.equal(scan.saved,1);assert.equal(scan.partial,1);
   assert.equal(db.summary().total,1);assert.equal(db.summary().scans,1);assert.equal(db.summary().partials,1);
-  assert.equal(db.db.prepare('PRAGMA user_version').get().user_version,6);
+  assert.equal(db.db.prepare('PRAGMA user_version').get().user_version,7);
   db.close();fs.rmSync(folder,{recursive:true,force:true});
 });
 
@@ -120,7 +120,7 @@ test('SQLite persists editable targets and matches filtered ideal market prices'
 test('catálogo v5 y sugerencias quedan disponibles al reiniciar, sin borrar observaciones',()=>{
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'radar-catalog-'));
   let db=openDatabase(dir);
-  assert.equal(db.db.prepare('PRAGMA user_version').get().user_version,6);
+  assert.equal(db.db.prepare('PRAGMA user_version').get().user_version,7);
   assert.equal(db.catalogProfiles().length,10);
   assert.equal(db.catalogProfiles().find(p=>p.species==='Shroomish').evolution,'Breloom');
   const row={species:'Gible',nature:'alegre',level:1,sex:'M',

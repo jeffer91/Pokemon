@@ -35,9 +35,13 @@ function profileFit(row,profiles=[]){
     if(!req.length)continue;
     const natureOk=!!p.nature&&normalizedNature(row.nature)===normalizedNature(p.nature);
     const reqHits=req.filter(i=>row.ivs?.[i]===31).length;
-    const extra=total31-reqHits;
-    const quality=Math.min(4,(natureOk?1.5:0)+2*reqHits/req.length+(extra>=1?.5:0));
-    if(!best||quality>best.quality)best={profile:p.name,natureOk,reqHits,reqTotal:req.length,quality};
+    // The attacking stat the profile does not use is worthless: a 31 in
+    // At. Especial on a physical Krookodile adds nothing.
+    const useless=req.includes(1)&&!req.includes(3)?3:req.includes(3)&&!req.includes(1)?1:null;
+    const usefulExtra=(row.ivs||[]).filter((v,i)=>v===31&&!req.includes(i)&&i!==useless).length;
+    const reqMask=req.map(i=>row.ivs?.[i]===31?'1':'0').join('');
+    const quality=Math.min(4,(natureOk?1.5:0)+2*reqHits/req.length+(usefulExtra>=1?.5:0));
+    if(!best||quality>best.quality)best={profile:p.name,natureOk,reqHits,reqMask,usefulExtra,reqTotal:req.length,quality};
   }
   const ideal=!!best&&best.natureOk&&best.reqHits===best.reqTotal;
   return {total31,generic,best,ideal,quality:round1(Math.max(generic,best?.quality||0))};
@@ -46,7 +50,7 @@ function profileFit(row,profiles=[]){
 // page against hundreds of stored samples stays far below one millisecond.
 const keyCache=new Map();
 function classKeys(row,profiles){
-  const id=row.species+'|'+row.nature+'|'+(row.ivs||[]).join(',')+'|'+profiles.length;
+  const id=row.species+'|'+row.nature+'|'+(row.ivs||[]).join(',')+'|'+variantOf(row)+'|'+profiles.length;
   const hit=keyCache.get(id);
   if(hit)return hit;
   const out=computeKeys(row,profiles);
@@ -54,17 +58,20 @@ function classKeys(row,profiles){
   keyCache.set(id,out);
   return out;
 }
+// Alfa, Variocolor, Partículas… are separate markets (an Alfa Krookodile 2×31
+// sells at ~2× a normal one): never compare across variants.
+function variantOf(row){return row?.variant&&row.variant!=='normal'?String(row.variant):'normal';}
 function computeKeys(row,profiles){
   const fit=profileFit(row,profiles);
-  // Exact number of 31s (a 6×31 is never priced like a 5×31). Level is NOT
-  // part of the class: on the GTL it barely moves the price (Garchomp Nv. 51
-  // and Nv. 100 at the same 190.000).
-  const sp=speciesKey(row.species),t=fit.total31;
+  // "Pokémon iguales": same species and variant, same ideal-nature match,
+  // the SAME required 31s and the same number of other USEFUL 31s. Level is
+  // not part of the class (it barely moves the GTL price).
+  const sp=speciesKey(row.species),t=fit.total31,v=variantOf(row);
   // Ditto is priced by how many perfect IVs it has, whatever its nature.
-  if(sp==='ditto')return {fit,exact:[sp,t].join('|'),loose:[sp,t].join('|')};
-  if(fit.best)return {fit,exact:[sp,fit.best.natureOk?'N':'n',fit.best.reqHits,t].join('|'),
-    loose:[sp,fit.best.reqHits,t].join('|')};
-  return {fit,exact:[sp,normalizedNature(row.nature),t].join('|'),loose:[sp,t].join('|')};
+  if(sp==='ditto')return {fit,exact:[sp,v,t].join('|'),loose:[sp,v,t].join('|')};
+  if(fit.best)return {fit,exact:[sp,v,fit.best.natureOk?'N':'n',fit.best.reqMask,fit.best.usefulExtra].join('|'),
+    loose:[sp,v,fit.best.reqMask,fit.best.usefulExtra].join('|')};
+  return {fit,exact:[sp,v,normalizedNature(row.nature),t].join('|'),loose:[sp,v,t].join('|')};
 }
 function dealScore(net){
   if(!Number.isFinite(net)||net<1000)return 0;
@@ -110,7 +117,8 @@ const TIERS={
   line:{label:'estimado por su evolución',confidence:.45,minNet:5000,minDiscount:.4}
 };
 const LINE_FACTOR=.45;
-const STALE_MS=3*86_400_000; // a base form usually sells well below its final form
+const STALE_MS=3*86_400_000;
+const FRESH_MS=86_400_000; // the cheap end must have been seen in the last 24 h // a base form usually sells well below its final form
 function scaled(list,t,m,factor=1){
   return list.map(s=>Math.round(s.price*m[Math.min(6,t)]/m[Math.min(6,count31(s.ivs))]*factor));
 }
@@ -159,29 +167,19 @@ function assess(listing,samples=[],{profiles=[],balance=null,fee=null,pendingSpe
   if(quality<1.5&&!soldSame)
     return {...base,decision:'NO_COMPRAR',reason:'SIN_VALOR',reasonText:'Sin valor de reventa',
       score:quality,confidence:1,comparables:exactPeers.length};
-  // Pick the most exact tier that has enough evidence.
+  // COMPRAR only with complete data, gathered beforehand: at least 3 equal
+  // Pokémon (exact class) seen in the last 24 h. Rough estimates (by species,
+  // by evolution) NEVER recommend a buy: a Krookodile cauta was once bought
+  // because it was compared with a firme Atk-31 one. No data → NO COMPRAR.
   let tierKey=null,estimates=null;
   const sold=(sales||[]).filter(x=>Number.isSafeInteger(x.price)&&x.ivs&&classKeys(x,profiles).exact===exact).map(x=>x.price);
-  const fresh=list=>list.filter(s=>!s.stale).length;
-  if(fresh(exactPeers)>=MIN_SAMPLES){tierKey='exact';estimates=exactPeers.map(s=>s.price);}
-  else{
-    const loosePeers=pool.filter(x=>x.k.loose===loose).map(x=>x.s);
-    const all=pool.map(x=>x.s);
-    if(fresh(loosePeers)>=MIN_SAMPLES){tierKey='loose';estimates=loosePeers.map(s=>s.price);}
-    else if(fresh(all)>=MIN_SAMPLES){tierKey='species';estimates=scaled(all,t,multipliers);}
-    else{
-      const finals=cleanPool(lineSamples,listing,cutoff);
-      if(fresh(finals)>=MIN_SAMPLES){tierKey='line';estimates=scaled(finals,t,multipliers,LINE_FACTOR);}
-    }
-  }
-  // Cheaper exact competitors always count, even when a rougher tier is used.
-  if(estimates&&exactPeers.length)estimates=[...estimates,...exactPeers.map(s=>s.price)];
-  if(!tierKey&&sold.length){tierKey='exact';estimates=sold;}
+  const freshExact=exactPeers.filter(s=>!s.stale&&s.lastSeen>=now-FRESH_MS);
+  if(freshExact.length>=MIN_SAMPLES||sold.length>=2){tierKey='exact';estimates=exactPeers.map(s=>s.price);}
   if(!tierKey){
-    const have=Math.max(pool.length,0);
-    const out={...base,decision:'SILENCIO',reason:'MUESTRA_INSUFICIENTE',score:quality,comparables:have,
-      reasonText:'Faltan precios de '+listing.species+' ('+have+'/'+MIN_SAMPLES+')'+(fit.ideal?' · ideal '+target:''),confidence:0};
-    return overBudget?{...out,decision:'NO_COMPRAR',reason:'RESERVA_30_POR_CIENTO',reasonText:'Fuera de tu presupuesto'}:out;
+    const have=freshExact.length;
+    const out={...base,decision:'NO_COMPRAR',reason:'MUESTRA_INSUFICIENTE',score:quality,comparables:have,
+      reasonText:'Faltan precios iguales ('+have+'/'+MIN_SAMPLES+')'+(variantOf(listing)!=='normal'?' · '+variantOf(listing):''),confidence:0};
+    return overBudget?{...out,reason:'RESERVA_30_POR_CIENTO',reasonText:'Fuera de tu presupuesto'}:out;
   }
   const T=TIERS[tierKey];
   // You can only resell by undercutting the competition: 1 % below the
@@ -216,4 +214,4 @@ function assess(listing,samples=[],{profiles=[],balance=null,fee=null,pendingSpe
     'Gana ~'+money(net)+', se vendería lento';
   return {...result,decision:'NO_COMPRAR',reason:net<minNet?'MARGEN_INSUFICIENTE':'PUNTAJE_BAJO',reasonText:why};
 }
-module.exports={learnMultipliers,DEFAULT_MULTIPLIERS,TIERS,assess,profileFit,classKeys,dealScore,percentile,DEFAULT_FEE,BUY_SCORE,MIN_SAMPLES};
+module.exports={variantOf,classKeys,learnMultipliers,DEFAULT_MULTIPLIERS,TIERS,assess,profileFit,classKeys,dealScore,percentile,DEFAULT_FEE,BUY_SCORE,MIN_SAMPLES};

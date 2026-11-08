@@ -5,6 +5,8 @@ contextBridge.exposeInMainWorld('radar',{
   getState:()=>ipcRenderer.invoke('radar:getState'),
   play:()=>ipcRenderer.invoke('radar:play'),
   learn:()=>ipcRenderer.invoke('radar:learn'),
+  version:()=>ipcRenderer.invoke('radar:version'),
+  addTrade:trade=>ipcRenderer.invoke('radar:addTrade',trade),
   nextMission:()=>ipcRenderer.invoke('radar:nextMission'),
   stop:()=>ipcRenderer.invoke('radar:stop'),
   getDiagnostics:()=>ipcRenderer.invoke('radar:diagnostics'),

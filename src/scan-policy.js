@@ -1,6 +1,8 @@
 'use strict';
 // Idle scans only a small title region; active scans the market rows.
-const DELAYS=Object.freeze({idle:1100,gtl:650});
+// GTL visible: quick re-check (OCR only runs when the table pixels change).
+// Elsewhere: slow polling, nothing to read.
+const DELAYS=Object.freeze({idle:2500,gtl:700});
 function nextDelay(mode){return mode==='gtl'?DELAYS.gtl:DELAYS.idle;}
 function region(width,height,part){
   if(!Number.isInteger(width)||!Number.isInteger(height)||width<200||height<200)

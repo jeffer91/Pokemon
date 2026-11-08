@@ -26,6 +26,8 @@ function cellPng(source,rect,minHeight=0){
 }
 const {parseNameCell,fuzzyNature,parseMoney}=require('./recognition');
 const {createLearner}=require('./learning');
+const {LABEL_COLUMN,boxVisible,BOX_REGION,ALPHA_EMBLEM,parseBox,frameRect,alphaEmblem,saleAdvice}=require('./pc-box');
+const {classKeys}=require('./brain');
 
 if(!app.requestSingleInstanceLock())app.quit();
 // The overlay plays a short alert when a bargain appears, without a click.
@@ -72,7 +74,13 @@ function rememberSeen(rows,decisions){
 function detectPurchase(previous,balance){
   if(!Number.isSafeInteger(previous)||!Number.isSafeInteger(balance)||balance>=previous)return null;
   const drop=previous-balance;
-  const match=[...recentSeen].reverse().find(r=>r.price===drop&&!r.bought);
+  let match=[...recentSeen].reverse().find(r=>r.price===drop&&!r.bought);
+  if(!match){
+    // Fallback to the database: works after restarts and on any screen.
+    const row=storage.recentByPrice(drop);
+    const already=storage.trades(5).some(t=>t.buy_price===drop&&Date.now()-t.bought_at<30*60_000);
+    if(row&&!already)match={...row,score:null};
+  }
   if(!match)return null;
   for(const r of recentSeen)if(r.species===match.species&&r.price===match.price)r.bought=true;
   storage.recordPurchase(match,{score:match.score});
@@ -159,9 +167,9 @@ function compactFallback(){
 async function showCompact(label='Radar'){
   if(!sessionActive||!overlay||overlay.isDestroyed())return;
   const version=sessionVersion;
-  const mission=learnView();
-  broadcast('radar:overlay',{mode:'compact',label,mission});
-  const width=mission?300:200,height=mission?176:40;
+  const mission=learnView(),sale=mission?null:currentSale();
+  broadcast('radar:overlay',{mode:'compact',label,mission,sale});
+  const width=mission||sale?300:200,height=mission?176:sale?150:40;
   const bounds=overlay.getBounds();
   if(!overlay.isVisible() || bounds.width!==width || bounds.height!==height)
     place({...compactFallback(),x:compactFallback().x-(width-110),width,height});
@@ -266,6 +274,60 @@ function publishData(force=false){
   });
 }
 function imageHash(png){return crypto.createHash('sha1').update(png).digest('hex');}
+// ---- PC box: which Pokémon you are about to sell, and at what price ----
+let lastBoxHash='',lastBoxAt=0,lastSale=null;
+function currentSale(){return lastSale&&Date.now()-lastSale.seenAt<10*60_000?lastSale:null;}
+async function checkPcBox(image,size){
+  const now=Date.now();
+  if(now-lastBoxAt<2500)return false;
+  lastBoxAt=now;
+  try{
+    // Milliseconds: no OCR at all unless the box summary is really on screen.
+    const lc=frameRect(size,LABEL_COLUMN);
+    if(!boxVisible(image.crop(lc).toBitmap(),lc.width,lc.height))return false;
+    const rect=frameRect(size,BOX_REGION);
+    const crop=image.crop(rect);
+    const hash=imageHash(crop.resize({width:90,quality:'good'}).toBitmap());
+    if(hash===lastBoxHash)return !!currentSale();
+    lastBoxHash=hash;
+    const big=crop.resize({width:rect.width*2,quality:'best'});
+    const s2=big.getSize();
+    const png=nativeImage.createFromBitmap(invertForOcr(big.toBitmap()),{width:s2.width,height:s2.height}).toPNG();
+    const pokemon=parseBox(await recognizer.readBlock(png));
+    if(!pokemon)return false;
+    const er=frameRect(size,ALPHA_EMBLEM);
+    pokemon.variant=alphaEmblem(image.crop(er).toBitmap(),er.width,{x:0,y:0,width:er.width,height:er.height})?'alfa':'normal';
+    const trade=storage.trades().find(t=>['comprado','en_venta'].includes(t.state)&&
+      t.species.toLowerCase()===pokemon.species.toLowerCase());
+    const advice=saleAdvice(pokemon,storage.marketSamples(pokemon.species),
+      {classKeys,profiles:PRIORITY_PROFILES,buyPrice:trade?.buy_price??null,feeFor:feeFor});
+    lastSale={...advice,seenAt:now};
+    return true;
+  }catch{return false;}
+}
+function feeFor(){const f=storage.settings().listingFee;return Number.isSafeInteger(f)?f:1000;}
+// The HUD balance is OCR'd only when its pixels change (or every 60 s), on
+// ANY screen: buying happens in the GTL but the drop may show elsewhere.
+let lastBalanceHash='';
+async function checkBalance(image,size){
+  try{
+    const balanceRect=region(size.width,size.height,'balance');
+    const balanceCrop=image.crop(balanceRect);
+    const hash=imageHash(balanceCrop.resize({width:120,quality:'good'}).toBitmap());
+    const now=Date.now();
+    if(hash===lastBalanceHash&&now-lastBalanceReadAt<60000&&storage.latestBalance()!==null)return;
+    lastBalanceHash=hash;lastBalanceReadAt=now;
+    const scaled=balanceCrop.resize({width:Math.max(480,balanceCrop.getSize().width*2),quality:'best'});
+    const balance=await recognizer.readBalance(scaled.toPNG());
+    if(!Number.isSafeInteger(balance))return;
+    const bought=detectPurchase(storage.latestBalance(),balance);
+    if(bought)setStatus({message:'Compra registrada: '+bought.species+' por '+bought.price.toLocaleString('es-EC')+' ¥',
+      trades:storage.trades()});
+    storage.recordBalance(balance);
+    diagnostics?.setBalance(balance,'HUD OCR (solo al cambiar)');
+  }catch{}
+}
+
 function materiallyDifferent(previous,current){
   // Two GTL pages of the same search differ only in a few digits, so compare a
   // finer thumbnail and react to 0.8 % of changed pixels. The table is static
@@ -297,6 +359,8 @@ async function tick(){
   if(!sessionActive)return;
   if(engineTesting){schedule(300);return;}
   if(working){schedule(240);return;}
+  // While you use PokéRadar itself there is nothing to read: no capture, no CPU.
+  if(dashboard&&!dashboard.isDestroyed()&&dashboard.isFocused()&&!dashboard.isMinimized()){schedule(1500);return;}
   working=true;
   const version=sessionVersion,start=performance.now();
   let stage='window';
@@ -335,9 +399,17 @@ async function tick(){
     }
     track('capture','ok',capture.code,
       size.width+' × '+size.height+' píxeles · '+capture.via);
+    await checkBalance(image,size);
+    if(!sessionActive||version!==sessionVersion)return;
     diagnostics?.setEngines(captureAgent.snapshot());
     const panel=locateGtlPanel(image);
     let visibleGtl=!!panel;
+    // Not in the GTL: maybe the PC box is open → sale advice for that Pokémon.
+    if(!visibleGtl&&await checkPcBox(image,size)){
+      if(!sessionActive||version!==sessionVersion)return;
+      setStatus({state:'activo',message:'Caja del PC: '+lastSale.species+' · '+(lastSale.suggested?'vender a '+lastSale.suggested.toLocaleString('es-EC')+' ¥':'sin precios iguales')});
+      progress('caja');await showCompact('Caja del PC');return;
+    }
     if(capture.via==='electron-visual' && !visibleGtl)
       track('gtl','pending','GTL-OCULTO','Monitor captado; GTL no visible');
     // Pixel geometry detects the GTL before OCR, even when titles are unreadable.
@@ -416,20 +488,6 @@ async function tick(){
     // Never hide the last confirmed page just because a new OCR pass begins.
     setStatus({state:'leyendo',message:'GTL detectado · leyendo anuncios...',recognized:0});
     if(!sessionActive||version!==sessionVersion)return;
-    // Balance is read from a separate small crop; GTL OCR excludes the top-left.
-    if(now-lastBalanceReadAt>(storage.latestBalance()===null?5000:10000)){
-      const balanceRect=region(size.width,size.height,'balance');
-      const balanceCrop=image.crop(balanceRect);
-      const scaledBalance=balanceCrop.resize({
-        width:Math.max(480,balanceCrop.getSize().width*2),quality:'best'});
-      const balance=await recognizer.readBalance(scaledBalance.toPNG());
-      const bought=detectPurchase(storage.latestBalance(),balance);
-      if(bought)setStatus({message:'Compra registrada: '+bought.species+' por '+bought.price.toLocaleString('es-EC')+' ¥',
-        trades:storage.trades()});
-      lastBalanceReadAt=now;
-      if(Number.isSafeInteger(balance))storage.recordBalance(balance);
-      diagnostics?.setBalance(balance,'HUD OCR ampliado');
-    }
     const ocrStart=performance.now();
     progress('leyendo');
     const enlarged=marketImage.resize({width:rect.width*2,quality:'best'});
@@ -530,7 +588,7 @@ async function tick(){
     diagnostics?.setOcrRows(res.diagnosticRows||[],(res.sort||'unknown')+' · '+(capture.via||'captura')+
       (lastReadStats?' · verde '+lastReadStats.color+', plantillas '+lastReadStats.template+
         ', celdas '+lastReadStats.cellOcr+', textos '+lastReadStats.textFixed+', corregidos '+lastReadStats.corrected+
-        ', dígitos aprendidos '+lastReadStats.templates+'/10':''));
+        ', dígitos aprendidos '+lastReadStats.templates+'/10'+', variantes '+(lastReadStats.variants||0):''));
     broadcast('radar:diagnostics',diagnostics?.snapshot());
     const balance=storage.latestBalance();
     const bargains=[];
@@ -549,11 +607,14 @@ async function tick(){
       return sampleCache.get(k);
     };
     const pick=row=>({rank:row.rank,species:row.species,price:row.price,
-      level:row.level,nature:row.nature,ivs:row.ivs});
+      level:row.level,nature:row.nature,ivs:row.ivs,variant:row.variant||'normal'});
+    const tagVariant=(row,ev)=>row.variant&&row.variant!=='normal'&&ev.reasonText?
+      {...ev,reasonText:row.variant.toUpperCase().replace('+',' + ')+' · '+ev.reasonText}:ev;
     for(const row of rows){
-      const ev=assess({...row,fingerprint:identity(row)},samplesFor(row.species),
+      const ev0=assess({...row,fingerprint:identity(row)},samplesFor(row.species),
         {...options,lineSamples:lineSamplesFor(row.species,sampleCache),
           sales:salesCache.get(row.species)??salesCache.set(row.species,storage.salesFor(row.species)).get(row.species)});
+      const ev=tagVariant(row,ev0);
       decisions.push({...pick(row),...ev});
     }
     // Incomplete rows stay pending, except for clear budget exclusions.
@@ -588,7 +649,7 @@ async function tick(){
     if(!sessionActive||version!==sessionVersion)return;
     // Check for a material page change without comparing PNG bytes; identical
     // offers may have small hover/timer animations while OCR is running.
-    if(decisions.length && Date.now()-now > 1500){
+    if(decisions.length && Date.now()-now > 1500 && !String(capture.via||'').startsWith('win-')){
       stage='capture';
       const fresh=await getGameSource(true);
       if(!fresh?.image)return;
@@ -672,7 +733,7 @@ async function tick(){
     working=false;
     if(sessionActive&&version===sessionVersion){
       const chosen=captureAgent?.selected();
-      schedule(chosen?.startsWith('win-')?Math.max(1800,nextDelay(mode)):nextDelay(mode));
+      schedule(chosen?.startsWith('win-')?Math.max(900,nextDelay(mode)):nextDelay(mode));
     }
   }
 }
@@ -724,6 +785,18 @@ function handlers(){
     profiles,prices:storage.targetPrices(profiles),coverage:coverage(profiles),
     recent:recentEvaluated(profiles),history:storage.history(),trades:storage.transactionHistory(),
     balance:storage.latestBalance(),diagnostics:diagnostics?.snapshot()};});
+  // Manual purchase (when the automatic detection missed it).
+  ipcMain.handle('radar:addTrade',(_e,t)=>{
+    const ivs=String(t?.ivs||'').split(/[\/,\s]+/).filter(Boolean).map(Number);
+    const row={species:String(t?.species||'').trim().slice(0,40),level:Number.isInteger(+t?.level)?+t.level:null,
+      nature:String(t?.nature||'').trim().toLowerCase().slice(0,20)||null,ivs:ivs.length===6&&ivs.every(v=>v>=0&&v<=31)?ivs:null,
+      price:Number(String(t?.price||'').replace(/\D/g,'')),variant:t?.alfa?'alfa':'normal'};
+    if(!row.species||!Number.isSafeInteger(row.price)||row.price<=0)throw Error('Escribe al menos el Pokémon y el precio de compra');
+    storage.recordPurchase(row);
+    setStatus({trades:storage.trades()});
+    return storage.trades();
+  });
+  ipcMain.handle('radar:version',()=>app.getVersion());
   ipcMain.handle('radar:play',()=>startSession('hunt'));
   ipcMain.handle('radar:learn',()=>startSession('learn'));
   ipcMain.handle('radar:nextMission',()=>nextMission());
@@ -818,6 +891,7 @@ app.whenReady().then(async()=>{
 }).catch(error=>{require('electron').dialog.showErrorBox('PokéRadar',error.message);app.quit();});
 app.on('before-quit',()=>{
   stopSession();clearInterval(backupTimer);
+  try{require('./window-locator').stopHelper();}catch{}
   recognizer?.close().catch(()=>{});
   if(storage){try{storage.close();}catch{}}
 });

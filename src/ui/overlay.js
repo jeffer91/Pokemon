@@ -51,6 +51,31 @@ function liveStrip(){
   bar.append(fill);box.append(span,bar);
   return box;
 }
+// Sale card: the Pokémon selected in the PC box and the price to list it at.
+const yen=n=>Number.isFinite(n)?Math.round(n).toLocaleString('es-ES')+' ¥':'—';
+function saleCard(x){
+  const box=document.createElement('div');box.className='mission sale';
+  const head=document.createElement('div');head.className='mission-head';
+  const tag=document.createElement('strong');tag.textContent='VENDER';
+  const info=document.createElement('span');
+  info.textContent=(x.variant&&x.variant!=='normal'?x.variant.toUpperCase()+' · ':'')+(x.comparables||0)+' vistos'+(x.compared?' · '+x.compared:'');
+  head.append(tag,info);
+  const title=document.createElement('div');title.className='mission-title';
+  title.textContent=x.species+(x.level?' · Nv. '+x.level:'')+(x.nature?' · '+x.nature:'');
+  const price=document.createElement('div');price.className='sale-price';
+  price.textContent=x.suggested?'Pon '+yen(x.suggested):'Sin precio seguro';
+  const detail=document.createElement('div');detail.className='mission-filters';
+  detail.textContent=x.suggested?'Competidor más barato: '+yen(x.cheapest)+' · rápido: '+yen(x.fast):(x.note||'');
+  box.append(head,title,price,detail);
+  if(x.suggested){
+    const net=document.createElement('div');net.className='mission-check '+(x.net===null?'':x.net>0?'ok':'bad');
+    net.textContent=x.net===null?'Cuota ~'+yen(x.fee)+' · compra no registrada':
+      'Ganancia: '+yen(x.net)+' (compra '+yen(x.buyPrice)+', cuota ~'+yen(x.fee)+')';
+    box.append(net);
+    if(x.note){const n=document.createElement('div');n.className='mission-hint';n.textContent=x.note;box.append(n);}
+  }
+  return box;
+}
 // Mission card for "Aprender precios": what to type in Búsqueda Avanzada.
 function missionCard(m){
   const box=document.createElement('div');box.className='mission';
@@ -81,10 +106,11 @@ function missionCard(m){
 window.radar.on('radar:overlay',payload=>{
   if(payload.mode!=='results'){
     const label=String(payload.label||'Radar').slice(0,18);
-    const signature='mini|'+label+'|'+JSON.stringify(payload.mission||null);
+    const signature='mini|'+label+'|'+JSON.stringify([payload.mission||null,payload.sale||null]);
     if(previous===signature)return;
     previous=signature;root.replaceChildren();root.className='compact';
     if(payload.mission){root.className='compact with-mission';root.append(missionCard(payload.mission));renderLive();return;}
+    if(payload.sale){root.className='compact with-mission';root.append(saleCard(payload.sale));return;}
     root.className='compact with-mission';const strip=liveStrip();strip.classList.add('solo');root.append(strip);renderLive();return;
     const box=document.createElement('div');box.className='mini';
     const dot=document.createElement('span');dot.className='dot';

@@ -19,7 +19,7 @@ function openDatabase(folder) {
   const db = new DatabaseSync(filename);
   db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=3000;');
   const version=db.prepare('PRAGMA user_version').get().user_version;
-  if(version > 6) throw new Error('Esta base requiere una versión más reciente de PokéRadar.');
+  if(version > 7) throw new Error('Esta base requiere una versión más reciente de PokéRadar.');
   if(version < 1) {
     db.exec(`BEGIN IMMEDIATE;
       CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -116,6 +116,10 @@ function openDatabase(folder) {
       db.exec('COMMIT');
     }catch(e){db.exec('ROLLBACK');throw e;}
   }
+  // v7: Alfa / Variocolor / Partículas are separate markets.
+  if(db.prepare('PRAGMA user_version').get().user_version < 7){
+    db.exec(`ALTER TABLE listings ADD COLUMN variant TEXT NOT NULL DEFAULT 'normal'; PRAGMA user_version=7;`);
+  }
   const priorityInsert=db.prepare(`INSERT INTO competitive_profiles(id,name,version,profile_json,updated_at)
     VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET
     name=excluded.name,version=excluded.version,profile_json=excluded.profile_json,
@@ -166,12 +170,21 @@ function openDatabase(folder) {
     ivs_json TEXT, buy_price INTEGER NOT NULL, bought_at INTEGER NOT NULL, score REAL,
     listing_key TEXT, listed_price INTEGER, listed_at INTEGER,
     sold_price INTEGER, closed_at INTEGER, state TEXT NOT NULL DEFAULT 'comprado', net INTEGER)`);
+  if(!db.prepare('PRAGMA table_info(trades)').all().some(c=>c.name==='variant'))
+    db.exec(`ALTER TABLE trades ADD COLUMN variant TEXT NOT NULL DEFAULT 'normal'`);
   const TRADE_FEE=1000;
+  // A balance drop equal to a price seen in the last 30 min = that purchase.
+  // Persistent: survives app restarts (the in-memory list did not).
+  function recentByPrice(price,now=Date.now()){
+    const r=db.prepare(`SELECT fingerprint,species,level,nature,sex,price,ivs_json,variant,last_seen FROM listings
+      WHERE price=? AND last_seen>=? ORDER BY last_seen DESC LIMIT 1`).get(price,now-30*60_000);
+    return r?{...r,ivs:JSON.parse(r.ivs_json)}:null;
+  }
   function recordPurchase(row,{score=null,at=Date.now()}={}){
     if(!row||typeof row.species!=='string'||!Number.isSafeInteger(row.price)||row.price<=0)return null;
-    const r=db.prepare(`INSERT INTO trades(species,level,nature,ivs_json,buy_price,bought_at,score)
-      VALUES(?,?,?,?,?,?,?)`).run(row.species,Number.isInteger(row.level)?row.level:null,row.nature||null,
-      JSON.stringify(row.ivs||null),row.price,at,Number.isFinite(score)?score:null);
+    const r=db.prepare(`INSERT INTO trades(species,level,nature,ivs_json,buy_price,bought_at,score,variant)
+      VALUES(?,?,?,?,?,?,?,?)`).run(row.species,Number.isInteger(row.level)?row.level:null,row.nature||null,
+      JSON.stringify(row.ivs||null),row.price,at,Number.isFinite(score)?score:null,row.variant||'normal');
     db.prepare(`INSERT INTO transactions(fingerprint,species,kind,price,fee,occurred_at,note)
       VALUES(?,?,'BUY',?,0,?,'detectado por saldo')`).run(row.fingerprint||null,row.species,row.price,at);
     return Number(r.lastInsertRowid);
@@ -245,9 +258,10 @@ function openDatabase(folder) {
     }
     return current;
   };
-  const addListing=db.prepare(`INSERT INTO listings(fingerprint,species,level,nature,sex,price,ivs_json,first_seen,last_seen,seen_count,last_age_label)
-    VALUES(?,?,?,?,?,?,?,?,?,1,?) ON CONFLICT(fingerprint) DO UPDATE SET last_seen=excluded.last_seen,
-    seen_count=seen_count+1,last_age_label=excluded.last_age_label`);
+  const addListing=db.prepare(`INSERT INTO listings(fingerprint,species,level,nature,sex,price,ivs_json,first_seen,last_seen,seen_count,last_age_label,variant)
+    VALUES(?,?,?,?,?,?,?,?,?,1,?,?) ON CONFLICT(fingerprint) DO UPDATE SET last_seen=excluded.last_seen,
+    seen_count=seen_count+1,last_age_label=excluded.last_age_label,
+    variant=CASE WHEN excluded.variant!='normal' THEN excluded.variant ELSE variant END`);
   const addObservation=db.prepare(`INSERT OR IGNORE INTO observations(fingerprint,seen_at,search_context,page_number,rank_number)
     VALUES(?,?,?,?,?)`);
   let lastScanKey=''; let lastScanTime=0;
@@ -259,7 +273,7 @@ function openDatabase(folder) {
     try{
       for(let i=0;i<valid.length;i++) {
         const p=valid[i],fp=identity(p); const tm=now;
-        addListing.run(fp,p.species,p.level,p.nature,p.sex||null,p.price,JSON.stringify(p.ivs),tm,tm,p.age||null);
+        addListing.run(fp,p.species,p.level,p.nature,p.sex||null,p.price,JSON.stringify(p.ivs),tm,tm,p.age||null,p.variant||'normal');
         addObservation.run(fp,tm,String(context).slice(0,500),page,i+1);
       }
       db.exec('COMMIT');lastScanKey=scanKey;lastScanTime=now;return valid.length;
@@ -284,7 +298,7 @@ function openDatabase(folder) {
       for(const row of valid){
         const fp=identity(row);
         addListing.run(fp,row.species,row.level,row.nature,row.sex||null,row.price,JSON.stringify(row.ivs),
-          now,now,String(row.age||'').slice(0,50));
+          now,now,String(row.age||'').slice(0,50),row.variant||'normal');
         addObservation.run(fp,now,String(context).slice(0,500),Number.isSafeInteger(page)?page:null,row.rank||null);
         // Two independent, well-formed reads are required before price comparisons.
         if(row.ocrReliable===true)confirmListing.run(fp);
@@ -307,7 +321,7 @@ function openDatabase(folder) {
   }
   // Every well-formed OCR listing of the species (verified or not) for the
   // class-based resale estimate. Each fingerprint is one distinct ad.
-  const samplesQuery=db.prepare(`SELECT fingerprint,species,level,nature,sex,price,ivs_json,first_seen,last_seen,verified
+  const samplesQuery=db.prepare(`SELECT fingerprint,species,level,nature,sex,price,ivs_json,first_seen,last_seen,verified,variant
     FROM listings WHERE species=? COLLATE NOCASE AND last_seen>=? ORDER BY last_seen DESC LIMIT 600`);
   // Every recent ad (species, IVs, price) to learn how price grows per 31.
   const recentPricesQuery=db.prepare(`SELECT species,ivs_json,price FROM listings WHERE last_seen>=? ORDER BY last_seen DESC LIMIT 8000`);
@@ -481,7 +495,7 @@ function openDatabase(folder) {
   async function saveBackup(){const dest=path.join(folder,'backups');fs.mkdirSync(dest,{recursive:true});
     const file=path.join(dest,`pokeradar-${new Date().toISOString().slice(0,10)}.sqlite`);
     if(!fs.existsSync(file)) await backup(db,file);return file;}
-  return {db,filename,recordPurchase,linkOwnListings,trades,salesFor,recordOwnListings,ownListings,settings:getSettings,applySettings,recordListings,recordMarketScan,candidates,marketSamples,recentPrices,targetPrices,marketIntelligence,catalogProfiles,recordRecommendation,
+  return {db,filename,recentByPrice,recordPurchase,linkOwnListings,trades,salesFor,recordOwnListings,ownListings,settings:getSettings,applySettings,recordListings,recordMarketScan,candidates,marketSamples,recentPrices,targetPrices,marketIntelligence,catalogProfiles,recordRecommendation,
     recordBalance,latestBalance,recent,history,stats,summary,addTransaction,transactionHistory,saveBackup,
     competitiveProfiles,projects,createProject,updateProject,close:()=>db.close()};
 }

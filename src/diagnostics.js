@@ -76,7 +76,7 @@ function createDiagnostics(folder){
     counts:{scans,recognized,saved,errors},events:events.slice(0,15)};}
   function report(){
     const info=snapshot();
-    return ['POKÉRADAR - DIAGNÓSTICO',new Date().toISOString(),
+    return ['POKÉRADAR v'+(require('../package.json').version)+' - DIAGNÓSTICO',new Date().toISOString(),
       ...info.stages.map(s=>s.label+': '+s.state+' | '+s.code+' | '+s.detail+(s.ms!==null?' | '+s.ms+'ms':'')),
       'Lecturas: '+scans+' | Reconocidos: '+recognized+' | Guardados: '+saved+' | Errores: '+errors,
       'MOTORES DE CAPTURA',

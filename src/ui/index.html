@@ -4,7 +4,7 @@
 <title>PokéRadar</title><link rel="stylesheet" href="style.css"></head>
 <body>
 <header class="top">
-  <div class="brand"><span class="logo">◉</span><div><strong>PokéRadar</strong><small>GTL</small></div></div>
+  <div class="brand"><span class="logo">◉</span><div><strong>PokéRadar</strong><small id="app-version">GTL</small></div></div>
   <span class="state" id="status-badge">DETENIDO</span>
 </header>
 <main>
@@ -52,6 +52,15 @@
       <div class="heading"><h2>Mis compras</h2><span id="trades-summary">Se registran solas cuando tu saldo baja por el precio de un anuncio visto</span></div>
       <div class="scroll"><table><thead><tr><th>Pokémon</th><th>Compra</th><th>En venta</th><th>Estado</th><th>Ganancia real</th><th>Días en venta</th></tr></thead>
       <tbody id="trades"><tr><td colspan="6">Aún no hay compras registradas.</td></tr></tbody></table></div>
+      <form id="trade-form" class="trade-form">
+        <input id="tf-species" placeholder="Pokémon (ej. Krookodile)" required>
+        <input id="tf-level" placeholder="Nivel" inputmode="numeric">
+        <input id="tf-nature" placeholder="Naturaleza">
+        <input id="tf-ivs" placeholder="IVs 25/18/14/31/23/31">
+        <input id="tf-price" placeholder="Precio de compra" inputmode="numeric" required>
+        <label><input id="tf-alfa" type="checkbox"> Alfa</label>
+        <button type="submit" class="ghost">Añadir compra</button>
+      </form>
     </div>
   </section>
   <section class="page" data-page="equipo" hidden>

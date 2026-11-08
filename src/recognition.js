@@ -217,6 +217,23 @@ function parseScreen(data,width,height,options={}) {
     }
     return {...base,ownListings,rows:[],partialRows:[],layout:null};
   }
+  // "Crear Anuncio": read the price typed and the listing tax the game shows,
+  // so the real fee is learned instead of assumed.
+  if(gtl&&/impuesto de anuncio/.test(all)){
+    const lines=[];
+    for(const w of [...words].sort((a,b)=>a.y-b.y)){
+      const line=lines.find(l=>Math.abs(l.y-w.y)<.014);
+      if(line)line.words.push(w);else lines.push({y:w.y,words:[w]});
+    }
+    const valueOf=label=>{
+      const line=lines.find(l=>normalized(join(l.words)).includes(label));
+      if(!line)return null;
+      const digits=join(line.words.filter(w=>w.x>.2&&w.x<.45)).replace(/\D/g,'');
+      return digits?Number(digits):null;
+    };
+    return {...base,createListing:{price:valueOf('precio por cada'),fee:valueOf('impuesto de anuncio')},
+      rows:[],partialRows:[],layout:null};
+  }
   if(!gtl||advanced)return {...base,filters:advanced&&isPanel?parseFilters(words):null,rows:[],partialRows:[],layout:null};
   const rows=[],partialRows=[];
   const cfg=isPanel?{
@@ -350,6 +367,10 @@ async function createRecognizer(){
       }finally{await worker.setParameters({tessedit_pageseg_mode:PSM.SPARSE_TEXT});}
     }
     return parsed;
+  },async readBlock(png){
+    // Free text block (PC box summary), current SPARSE_TEXT mode.
+    const r=await worker.recognize(png);
+    return String(r.data.text||'');
   },async readLines(images){
     const out=[];
     if(!images.length)return out;

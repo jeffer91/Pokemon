@@ -1,4 +1,4 @@
-# PokéRadar GTL — v0.14.0
+# PokéRadar GTL — v0.15.0
 
 Aplicación de escritorio Electron para Windows 11. **Play** inicia una sesión de lectura visual del GTL, sin formularios de cuota ni posiciones X/Y, y muestra un pequeño radar flotante. No realiza compras ni controla el cliente del juego.
 
@@ -315,3 +315,27 @@ Revisado con la base real del jugador (558 anuncios, 183 especies): el 60 % esta
 - **La basura siempre es basura** aunque otros pidan mucho por ella; solo tus ventas reales de esa clase pueden demostrar lo contrario.
 - **Anuncios viejos (3+ días a la vista):** siguen contando como competencia, pero no como prueba de valor; si toda la evidencia es vieja, no hay estimación.
 - **Aprender prioriza misiones dentro de tu presupuesto**: las clases cuyo anuncio más barato visto supera tu límite pasan al final.
+
+## v0.15.0 — Compras solo con datos completos, Alfa/Variocolor/Partículas, Caja del PC y rendimiento
+
+**El caso Krookodile no puede repetirse.** La app recomendó comprar un Krookodile cauta (At. Esp. + Vel. 31) comparándolo con uno firme de Ataque 31 a 50.000; el real valía ~8.800 (se salvó porque era Alfa).
+- **COMPRAR solo con datos completos:** 3 o más Pokémon *iguales* (misma especie, variante, naturaleza ideal o no, los mismos 31 requeridos y la misma cantidad de otros 31 *útiles*) vistos en las últimas 24 h. Sin eso: NO COMPRAR con el motivo. Las estimaciones por especie o por evolución ya no recomiendan nunca.
+- **31 útiles:** el stat de ataque que el perfil no usa no cuenta (At. Especial en un Krookodile físico).
+- `npm run backtest -- <ruta a pokeradar.sqlite> [saldo]` repasa una base real con el cerebro actual antes de publicar.
+
+**Variantes, detectadas por color en el icono** (calibrado con capturas reales, sin falsos positivos en 110 filas):
+- **Alfa:** contorno rojo oscuro ≈ rgb(192,20,29) alrededor del sprite.
+- **Variocolor:** estrella amarilla arriba a la derecha.
+- **Partículas:** destello celeste de cuatro puntas.
+- Se guardan en la base (columna `variant`, esquema v7), se marcan en la etiqueta («ALFA · …») y nunca se comparan con los normales.
+
+**Caja del PC → precio de venta.** Al seleccionar un Pokémon en la Caja, la app lee nivel, especie, IVs, naturaleza, habilidad y el emblema Alfa, y muestra una tarjeta **VENDER**: precio = 1 % bajo el competidor más barato de la misma variante (idénticos → mismos 31 útiles → mismo número de 31), opción rápida, cuota y ganancia sobre tu compra. La tarjeta sigue visible 10 min (también en Crear Anuncio). Un chequeo de píxeles evita cualquier OCR si la Caja no está abierta.
+
+**Compras.** Se detectan por caída de saldo en cualquier pantalla (el saldo solo se relee cuando su imagen cambia) buscando el precio en la base de datos de los últimos 30 min, así que sobrevive a reinicios. Botón **Añadir compra** en *Mis compras* para registrar a mano.
+
+**Rendimiento.**
+- La captura de Windows ya no abre un PowerShell nuevo ni compila C# en cada imagen: un **proceso persistente** compila una vez y entrega los píxeles en bruto por archivo temporal (≈20 ms por orden).
+- Sin segunda captura de validación con motores de Windows.
+- Ritmo: 0,7 s con el GTL visible (OCR solo si la tabla cambia), 2,5 s fuera del GTL y pausa total mientras usas la ventana de PokéRadar.
+
+**Versión visible** en la cabecera, en el título de la ventana y en el diagnóstico.

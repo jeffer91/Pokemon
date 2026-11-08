@@ -114,3 +114,5 @@ nav{flex-wrap:wrap;overflow:visible;white-space:normal}
 .learn-actions{display:flex;justify-content:flex-end;margin-bottom:8px}
 .ghost{background:#fff;border:1px solid #cdd6e1;border-radius:8px;padding:8px 12px;font-weight:600;cursor:pointer}
 .ghost:disabled{opacity:.5;cursor:default}
+.trade-form{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;align-items:center}
+.trade-form input:not([type=checkbox]){flex:1 1 120px;min-width:100px;padding:7px 9px;border:1px solid #cdd6e1;border-radius:8px}
