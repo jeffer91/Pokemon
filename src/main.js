@@ -270,7 +270,7 @@ function publishData(force=false){
     summary,profiles,prices,catalog:storage.catalogProfiles(),
      competitive:storage.competitiveProfiles(),projects:storage.projects(),ownListings:storage.ownListings(),
     coverage:coverage(profiles),recent:recentEvaluated(profiles),history:storage.history(),
-    trades:storage.transactionHistory(),settings:storage.settings(),balance:storage.latestBalance()
+    settings:storage.settings(),balance:storage.latestBalance()
   });
 }
 function imageHash(png){return crypto.createHash('sha1').update(png).digest('hex');}
@@ -548,7 +548,7 @@ async function tick(){
       if(sessionKind==='learn'&&learner&&res.filters){
         // Re-read the value cells the mission needs when the big pass missed them.
         const m=learner.current(),values={...res.filters.values};
-        const wanted=m?[...m.ivs.map(i=>'ivMin'+i),...(m.level1?['levelMax']:[]),...(m.total31?['matches']:[])]
+        const wanted=m?[...m.ivs.map(i=>'ivMin'+i),...(m.total31?['matches']:[])]
           .filter(k=>!(k in values)&&res.filters.cells[k]):[];
         if(wanted.length&&panel){
           const kx=enlargedSize.width/rect.width,ky=enlargedSize.height/rect.height;
@@ -780,10 +780,11 @@ function handlers(){
     const intelligence=storage.marketIntelligence({spendable:availableToSpend(storage.latestBalance())});
     summary.research=intelligence.suggestions;
     summary.activity=intelligence.activity;
-    return {status,settings:storage.settings(),summary,catalog:storage.catalogProfiles(),
+    // "Mis compras" is filled from the status, so it shows at startup too.
+    return {status:{...status,trades:storage.trades()},settings:storage.settings(),summary,catalog:storage.catalogProfiles(),
      competitive:storage.competitiveProfiles(),projects:storage.projects(),ownListings:storage.ownListings(),
     profiles,prices:storage.targetPrices(profiles),coverage:coverage(profiles),
-    recent:recentEvaluated(profiles),history:storage.history(),trades:storage.transactionHistory(),
+    recent:recentEvaluated(profiles),history:storage.history(),
     balance:storage.latestBalance(),diagnostics:diagnostics?.snapshot()};});
   // Manual purchase (when the automatic detection missed it).
   ipcMain.handle('radar:addTrade',(_e,t)=>{
@@ -837,16 +838,6 @@ function handlers(){
     clipboard.writeText(diagnostics.report());return {ok:true};
   });
   ipcMain.handle('radar:stop',()=>{stopSession();return {ok:true,running:false};});
-  ipcMain.handle('radar:settings',(_e,changes)=>{
-    if(!changes||typeof changes!=='object'||Array.isArray(changes))throw Error('Configuración inválida');
-    if(Object.hasOwn(changes,'captureEnabled'))throw Error('Usa Play o Stop para controlar el radar.');
-    const settings=storage.applySettings(changes);publishData(true);return settings;
-  });
-  ipcMain.handle('radar:catalog',()=>storage.catalogProfiles());
-  ipcMain.handle('radar:team',()=>{
-    const profiles=profileList(storage.settings().teamOverrides);
-    return {profiles,prices:storage.targetPrices(profiles),coverage:coverage(profiles)};
-  });
   ipcMain.handle('radar:saveTeam',(_e,overrides)=>{
     const validated=validateOverrides(overrides);
     storage.applySettings({teamOverrides:validated});
@@ -863,8 +854,6 @@ function handlers(){
     publishData(true);
     return {ok:true,projects};
   });
-  ipcMain.handle('radar:history',()=>({history:storage.history(),trades:storage.transactionHistory()}));
-  ipcMain.handle('radar:trade',(_e,record)=>{storage.addTransaction(record);publishData(true);return {ok:true};});
   ipcMain.on('radar:minimize',()=>dashboard?.minimize());
 }
 app.whenReady().then(async()=>{

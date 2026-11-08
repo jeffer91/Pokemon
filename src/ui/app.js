@@ -51,7 +51,7 @@ function renderLearn(s){
   else{
     $('learn-count').textContent='Misión '+(m.completed+1)+' de '+m.total+' · datos '+m.got+'/'+m.goal;
     box.replaceChildren();
-    const title=document.createElement('b');title.textContent='Busca '+m.species+(m.level1?' (nivel 1)':'');
+    const title=document.createElement('b');title.textContent='Busca '+m.species;
     const filters=document.createElement('div');filters.textContent='Filtros: '+m.filters.join(' · ');
     const sort=document.createElement('div');sort.textContent='Orden: '+m.sort+' · base de '+m.target;
     const check=document.createElement('div');
@@ -62,7 +62,7 @@ function renderLearn(s){
   const body=$('missions');body.replaceChildren();
   for(const x of s.missions||[]){
     const tr=document.createElement('tr');
-    for(const v of [x.species+(x.level1?' · Nv. 1':''),x.filters.filter(f=>f!=='Nivel 1').join(' · '),x.got+'/'+x.goal,x.target]){
+    for(const v of [x.species,x.filters.join(' · '),x.got+'/'+x.goal,x.target]){
       const td=document.createElement('td');td.textContent=v;tr.append(td);
     }
     body.append(tr);
@@ -144,9 +144,6 @@ function renderData(data){
       ' · '+species+' · '+price,detail+' · '+stamp(h.timestamp)));
   }
   if(!history.childElementCount)history.textContent='Aún no hay decisiones.';
-  const trades=$('trades');trades.replaceChildren();
-  for(const t of (data.trades||[]).slice(0,30))trades.append(itemNode(
-    (t.kind==='BUY'?'Compra':'Venta')+' · '+t.species,currency(t.price)+' · '+stamp(t.occurred_at)));
 }
 $('play').addEventListener('click',async()=>{
   notice('');
@@ -173,17 +170,6 @@ $('next-mission').addEventListener('click',async()=>{
 });
 $('stop').addEventListener('click',async()=>{
   notice('');try{await window.radar.stop();}catch(e){notice(e.message);}
-});
-$('trade-form').addEventListener('submit',async event=>{
-  event.preventDefault();
-  try{
-    await window.radar.recordTrade({
-      kind:$('trade-kind').value,species:$('trade-species').value.trim(),
-      price:Number($('trade-price').value),fee:Number($('trade-fee').value)
-    });
-    $('trade-species').value='';$('trade-price').value='';
-    $('trade-feedback').textContent='Registrado.';
-  }catch(e){$('trade-feedback').textContent=e.message;}
 });
 window.radar.on('radar:status',renderStatus);
 window.radar.on('radar:data',renderData);

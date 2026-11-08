@@ -340,6 +340,12 @@ Revisado con la base real del jugador (558 anuncios, 183 especies): el 60 % esta
 
 **Versión visible** en la cabecera, en el título de la ventana y en el diagnóstico.
 
+## v0.15.2 — Auditoría y limpieza
+
+- «Mis compras» ya no se mezcla con el historial viejo: se quitó el formulario antiguo «Compras y ventas» de Historial (tenía los mismos identificadores y reemplazaba la tabla cada 6 s). «Mis compras» también aparece llena al abrir la app.
+- El nivel ya no separa mercados en ningún lado: se quitaron la sugerencia «Nivel mín. 1, máx. 1» de Buscar y los restos de misiones de nivel 1.
+- Código retirado: el evaluador de compras antiguo (`evaluate`, `saleFee`; el cerebro lo reemplazó) y las llamadas internas sin uso (`radar:trade`, `radar:history`, `radar:catalog`, `radar:team`, `radar:settings`). Los datos guardados no se tocan.
+
 ## v0.15.1 — Ventas reales detectadas («Terminado»)
 
 - En *Tus Anuncios*, **«Terminado» = vendido** (por eso se habilita «Tomar»), también después de cobrar, cuando No Reclamado vuelve a $0.

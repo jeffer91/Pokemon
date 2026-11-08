@@ -8,7 +8,7 @@ function signature(row){
 function groupKey(row){
   const iv=signature(row).join(',');
   const nature=String(row.nature||'').toLowerCase();
-  return [row.species.toLowerCase(),nature,row.level===1?'1':'2+',row.sex||'?',iv].join('|');
+  return [row.species.toLowerCase(),nature,row.sex||'?',iv].join('|');
 }
 function summarizeActivity(rows,now=Date.now()){
   const bySpecies=new Map(),byMarket=new Map();
@@ -26,7 +26,7 @@ function summarizeActivity(rows,now=Date.now()){
     if(row.verified===1)s.marketPrices.push(row.price);
     const key=groupKey(row);
     if(!byMarket.has(key))byMarket.set(key,{key,species,nature:row.nature,sex:row.sex,
-      level1:row.level===1,iv31:signature(row),samples:[],seen:0});
+      iv31:signature(row),samples:[],seen:0});
     const g=byMarket.get(key);g.seen++;(g.allPrices||(g.allPrices=[])).push(row.price);
     if(row.verified===1)g.samples.push(row);
   }
@@ -36,7 +36,7 @@ function summarizeActivity(rows,now=Date.now()){
     .sort((a,b)=>b.count-a.count||b.newest-a.newest);
   const comparable=[...byMarket.values()].map(g=>{
     const prices=g.samples.map(r=>r.price);
-    return {species:g.species,nature:g.nature,sex:g.sex,level1:g.level1,
+    return {species:g.species,nature:g.nature,sex:g.sex,
       iv31:g.iv31,count:g.seen,verified:prices.length,allPrices:g.allPrices||[],
       min:prices.length?Math.min(...prices):null,
       median:median(prices),lastSeen:g.samples.length?
@@ -62,11 +62,11 @@ function suggestedSearches(rows,now=Date.now(),{spendable=null}={}){
     const low=prices[0],mid=prices[Math.floor(prices.length/2)];
     if(!affordable(low)||mid-low<2000)continue;
     const iv=g.iv31.map(i=>IV_NAMES[i]+' 31').join(' · ');
-    push({key:'budget-'+[g.species,g.nature,g.iv31.join(','),g.level1].join('_'),kind:'budget',
-      score:60+Math.min(30,(mid-low)/1000),title:'Cazar: '+g.species+' · '+g.nature+(g.level1?' · Nv. 1':''),
+    push({key:'budget-'+[g.species,g.nature,g.iv31.join(',')].join('_'),kind:'budget',
+      score:60+Math.min(30,(mid-low)/1000),title:'Cazar: '+g.species+' · '+g.nature,
       detail:iv+' · '+g.count+' anuncios vistos · desde '+low.toLocaleString('es-EC')+' ¥, lo normal '+
         mid.toLocaleString('es-EC')+' ¥ · cabe en tu presupuesto',
-      label:'Dentro de presupuesto',filters:{species:g.species,nature:g.nature,iv:g.iv31,level:g.level1?1:null},
+      label:'Dentro de presupuesto',filters:{species:g.species,nature:g.nature,iv:g.iv31},
       samples:g.count,confidence:g.count>=8?'media':'baja',observedAt:g.lastSeen});
   }
   for(const g of market.comparable){
@@ -79,8 +79,7 @@ function suggestedSearches(rows,now=Date.now(),{spendable=null}={}){
       title:g.species+' · '+g.nature,
       detail:iv+' · '+g.verified+' precios comparables · mediana '+g.median.toLocaleString('es-EC')+
         ' ¥ · mínimo observado '+g.min.toLocaleString('es-EC')+' ¥',
-      label:emphasis,filters:{species:g.species,nature:g.nature,iv:g.iv31,
-        level:g.level1?1:null},samples:g.verified,confidence:g.verified>=10?'media':'baja',
+      label:emphasis,filters:{species:g.species,nature:g.nature,iv:g.iv31},samples:g.verified,confidence:g.verified>=10?'media':'baja',
       observedAt:g.lastSeen});
   }
   // Catalog profiles get priority whenever data are insufficient; actual

@@ -105,7 +105,7 @@
         <label>Perfil <select id="catalog-kind"><option value="all">Todos</option><option value="physical">Ataque físico</option><option value="special">Ataque especial</option></select></label>
       </div>
       <div id="catalog-items" class="catalog-grid"></div>
-      <p class="hint" id="catalog-feedback">Los 110 objetivos son referencias del usuario; confirmar habilidades y disponibilidad. El lote inicial sigue disponible.</p>
+      <p class="hint">Los 110 objetivos son referencias del usuario; confirmar habilidades y disponibilidad. El lote inicial sigue disponible.</p>
     </div>
   </section>
   <section class="page" data-page="precios" hidden>
@@ -175,17 +175,8 @@
     </div>
   </section>
   <section class="page" data-page="historial" hidden>
-    <div class="panel"><h2>Mis anuncios observados</h2><p class="hint">Abre Tus Anuncios en el juego. Activo significa en venta; no demuestra una venta. Registra las ventas confirmadas abajo para conservar tus resultados reales.</p><div id="own-listings" class="entries"></div></div>
+    <div class="panel"><h2>Mis anuncios observados</h2><p class="hint">Abre Tus Anuncios en el juego. Activo significa en venta; no demuestra una venta. Terminado = vendido: la compra se cierra sola en «Mis compras».</p><div id="own-listings" class="entries"></div></div>
     <div class="panel"><div class="heading"><h2>Decisiones</h2></div><div id="history" class="entries">Aún no hay datos.</div></div>
-    <div class="panel"><div class="heading"><h2>Compras y ventas</h2></div>
-      <form id="trade-form" class="trade">
-        <select id="trade-kind" aria-label="Operación"><option value="BUY">Compra</option><option value="SELL">Venta</option></select>
-        <input id="trade-species" placeholder="Pokémon" aria-label="Pokémon" required maxlength="40">
-        <input id="trade-price" type="number" placeholder="Precio ¥" aria-label="Precio" required min="1">
-        <input id="trade-fee" type="number" placeholder="Cuota ¥" aria-label="Cuota" value="0" min="0" required>
-        <button type="submit" class="secondary">Guardar</button>
-      </form><div class="hint" id="trade-feedback"></div><div class="entries" id="trades"></div>
-    </div>
   </section>
   <section class="page" data-page="diagnostico" hidden>
     <div class="panel">

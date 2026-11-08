@@ -85,7 +85,7 @@ function missionCard(m){
   count.textContent=m.done?'¡Completo!':'Datos '+m.got+'/'+m.goal+' · misión '+(m.completed+1)+'/'+m.total;
   head.append(tag,count);
   const title=document.createElement('div');title.className='mission-title';
-  title.textContent=m.done?'Todas las misiones tienen precios':m.species+(m.level1?' · Nivel 1':'');
+  title.textContent=m.done?'Todas las misiones tienen precios':m.species;
   box.append(head,title);
   if(!m.done){
     const filters=document.createElement('div');filters.className='mission-filters';

@@ -48,7 +48,7 @@ test('muestras homogéneas generan sugerencias de investigación de precios',()=
   assert.match(market.detail,/mediana/i);
   assert.equal(result.activity[0].count,7);
 });
-test('no mezcla diferente nivel, sexo, IV o naturaleza al estimar el precio',()=>{
+test('no mezcla sexo, IV o naturaleza; el nivel no separa mercados',()=>{
   const mixed=[
     row('Gible','alegre',11000,1),row('Gible','alegre',12000,2),
     row('Gible','alegre',15000,3,{sex:'F'}),
@@ -56,7 +56,9 @@ test('no mezcla diferente nivel, sexo, IV o naturaleza al estimar el precio',()=
     row('Gible','alegre',18000,6,{ivs:[12,9,8,6,12,31]})
   ];
   const groups=summarizeActivity(mixed,NOW).comparable;
-  assert.equal(groups.length,5);
+  // The level-40 Gible competes with the level-1 ones (same nature, sex, 31s).
+  assert.equal(groups.length,4);
+  assert.equal(groups.find(g=>g.nature==='alegre'&&g.sex!=='F'&&g.iv31.length===2).count,3);
   assert.equal(groups.some(g=>g.verified>=5),false);
   assert.equal(suggestedSearches(mixed,NOW).suggestions.some(x=>x.kind==='market'),false);
 });
