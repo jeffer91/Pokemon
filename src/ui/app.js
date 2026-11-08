@@ -18,9 +18,35 @@ function navigate(tab){
   for(const page of document.querySelectorAll('[data-page]'))page.hidden=page.dataset.page!==tab;
 }
 for(const tab of document.querySelectorAll('[data-tab]'))tab.addEventListener('click',()=>navigate(tab.dataset.tab));
+function renderLearn(s){
+  const m=s.learn,box=$('learn-current');
+  $('next-mission').disabled=!(m&&!m.done);
+  if(!m){$('learn-count').textContent='Pulsa «Aprender precios»';}
+  else if(m.done){$('learn-count').textContent='Completo';box.textContent='Todas las misiones ya tienen suficientes precios. Usa «Cazar gangas».';}
+  else{
+    $('learn-count').textContent='Misión '+(m.completed+1)+' de '+m.total+' · datos '+m.got+'/'+m.goal;
+    box.replaceChildren();
+    const title=document.createElement('b');title.textContent='Busca '+m.species+(m.level1?' (nivel 1)':'');
+    const filters=document.createElement('div');filters.textContent='Filtros: '+m.filters.join(' · ');
+    const sort=document.createElement('div');sort.textContent='Orden: '+m.sort+' · base de '+m.target;
+    box.append(title,filters,sort);
+  }
+  const body=$('missions');body.replaceChildren();
+  for(const x of s.missions||[]){
+    const tr=document.createElement('tr');
+    for(const v of [x.species+(x.level1?' · Nv. 1':''),x.filters.filter(f=>f!=='Nivel 1').join(' · '),x.got+'/'+x.goal,x.target]){
+      const td=document.createElement('td');td.textContent=v;tr.append(td);
+    }
+    body.append(tr);
+  }
+  if(!body.childElementCount){const tr=document.createElement('tr'),td=document.createElement('td');td.colSpan=4;td.textContent='—';tr.append(td);body.append(tr);}
+}
 function renderStatus(s){
   current.status=s;const running=!!s.running;
-  $('play').disabled=running;$('stop').disabled=!running;
+  const learning=running&&s.kind==='learn';
+  $('play').disabled=running&&!learning;$('learn').disabled=learning;$('stop').disabled=!running;
+  $('play').classList.toggle('running',running&&!learning);$('learn').classList.toggle('running',learning);
+  renderLearn(s);
   const badge=$('status-badge');
   badge.textContent=running?(s.state==='activo'?'GTL ACTIVO':s.state==='capturada'?'PANTALLA CAPTADA':s.state==='error'?'REVISAR':'EN ESPERA'):'DETENIDO';
   badge.className='state'+(running?' on':'')+(s.state==='error'?' bad':'');
@@ -98,6 +124,14 @@ $('play').addEventListener('click',async()=>{
   notice('');
   try{await window.radar.play();window.radar.minimize();}
   catch(e){notice('No se pudo iniciar el radar. Revisa Diagnóstico.');navigate('diagnostico');}
+});
+$('learn').addEventListener('click',async()=>{
+  notice('');
+  try{await window.radar.learn();window.radar.minimize();}
+  catch(e){notice('No se pudo iniciar el aprendizaje. Revisa Diagnóstico.');navigate('diagnostico');}
+});
+$('next-mission').addEventListener('click',async()=>{
+  try{await window.radar.nextMission();}catch(e){notice(e.message);}
 });
 $('stop').addEventListener('click',async()=>{
   notice('');try{await window.radar.stop();}catch(e){notice(e.message);}

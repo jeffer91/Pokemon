@@ -1,4 +1,4 @@
-# PokéRadar GTL — v0.9.0
+# PokéRadar GTL — v0.10.0
 
 Aplicación de escritorio Electron para Windows 11. **Play** inicia una sesión de lectura visual del GTL, sin formularios de cuota ni posiciones X/Y, y muestra un pequeño radar flotante. No realiza compras ni controla el cliente del juego.
 
@@ -218,3 +218,16 @@ Nota: la alineación de las etiquetas flotantes depende de la geometría detecta
 **Interfaz:** ocupa todo el ancho de la ventana; las pestañas se reparten sin barra de desplazamiento.
 
 **Límites honestos:** la reventa se estima con precios anunciados, no con ventas confirmadas. El sexo todavía no influye en el puntaje. La habilidad no se lee en la tabla. Cuantas más páginas recorras (por ejemplo, buscando tus Pokémon ideales ordenados por precio), mejores serán las estimaciones.
+
+## v0.10.0 — Dos Play: «Cazar gangas» y «Aprender precios»
+
+- **▶ Cazar gangas:** el radar de siempre. Puntúa cada fila de 0 a 10 y marca COMPRA ESTE AHORA.
+- **▶ Aprender precios:** la app te da **misiones de búsqueda** para llenar la base de precios que usa el cerebro.
+  - Ejemplo: *Busca Gible · Nivel 1 · Ataque 31 · Velocidad 31 · Naturaleza Alegre*.
+  - Las misiones salen de los 110 perfiles competitivos, primero los destacados, y cubren la especie final y su forma base a nivel 1 (Garchomp y Gible, Dragonite y Dratini…): 200 misiones en total.
+  - En el juego: abre Búsqueda Avanzada, aplica los filtros, ordena por precio y mira 2–3 páginas.
+  - Una tarjeta amarilla sobre el GTL muestra la misión y su progreso. Con **8 anuncios distintos** que cumplen la misión, suena un aviso y pasa sola a la siguiente.
+  - Si la búsqueda muestra menos de una página completa, ya no hay más anuncios y también avanza.
+  - **Ctrl+Alt+→** salta la misión. También hay un botón en la pestaña Radar, con la lista de las próximas misiones.
+  - Las gangas se siguen marcando mientras aprendes. Todo lo que se lee alimenta el precio de reventa del cerebro.
+- Puedes cambiar de modo sin detener el radar.

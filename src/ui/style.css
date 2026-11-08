@@ -106,3 +106,11 @@ nav{flex-wrap:wrap;overflow:visible;white-space:normal}
 .team-grid,.catalog-grid{grid-template-columns:repeat(auto-fill,minmax(300px,1fr))}
 .metrics{grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}
 #ocr-detail-rows td:last-child{max-width:none}
+
+.learn{background:#b7861b;border:1px solid #b7861b;color:#fff}.learn:not(:disabled):hover{background:#966c12}
+.actions button.running{outline:3px solid #f5c54299}
+.learn-current{background:#fff8e6;border:1px solid #f1d58c;border-radius:10px;padding:12px 14px;margin:6px 0 10px;line-height:1.45}
+.learn-current b{font-size:17px}
+.learn-actions{display:flex;justify-content:flex-end;margin-bottom:8px}
+.ghost{background:#fff;border:1px solid #cdd6e1;border-radius:8px;padding:8px 12px;font-weight:600;cursor:pointer}
+.ghost:disabled{opacity:.5;cursor:default}

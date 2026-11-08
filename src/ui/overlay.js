@@ -18,12 +18,35 @@ function alertBargain(){
     }
   }catch{}
 }
+// Mission card for "Aprender precios": what to type in Búsqueda Avanzada.
+function missionCard(m){
+  const box=document.createElement('div');box.className='mission';
+  const head=document.createElement('div');head.className='mission-head';
+  const tag=document.createElement('strong');tag.textContent='APRENDER';
+  const count=document.createElement('span');
+  count.textContent=m.done?'¡Completo!':'Datos '+m.got+'/'+m.goal+' · misión '+(m.completed+1)+'/'+m.total;
+  head.append(tag,count);
+  const title=document.createElement('div');title.className='mission-title';
+  title.textContent=m.done?'Todas las misiones tienen precios':m.species+(m.level1?' · Nivel 1':'');
+  box.append(head,title);
+  if(!m.done){
+    const filters=document.createElement('div');filters.className='mission-filters';
+    filters.textContent=(m.filters||[]).filter(f=>f!=='Nivel 1').join(' · ');
+    const hint=document.createElement('div');hint.className='mission-hint';
+    hint.textContent='Orden: precio · mira 2–3 págs · Ctrl+Alt+→ saltar';
+    const bar=document.createElement('div');bar.className='mission-bar';
+    const fill=document.createElement('i');fill.style.width=Math.round(100*m.got/m.goal)+'%';
+    bar.append(fill);box.append(filters,bar,hint);
+  }
+  return box;
+}
 window.radar.on('radar:overlay',payload=>{
   if(payload.mode!=='results'){
     const label=String(payload.label||'Radar').slice(0,18);
-    const signature='mini|'+label;
+    const signature='mini|'+label+'|'+JSON.stringify(payload.mission||null);
     if(previous===signature)return;
     previous=signature;root.replaceChildren();root.className='compact';
+    if(payload.mission){root.className='compact with-mission';root.append(missionCard(payload.mission));return;}
     const box=document.createElement('div');box.className='mini';
     const dot=document.createElement('span');dot.className='dot';
     const text=document.createElement('span');text.textContent=label;
@@ -40,9 +63,14 @@ window.radar.on('radar:overlay',payload=>{
   }
   if(announced.size>300)announced.clear();
   if(fresh)alertBargain();
-  const signature=JSON.stringify([rows,payload.step]);
+  const signature=JSON.stringify([rows,payload.step,payload.mission||null]);
   if(previous===signature)return;
   previous=signature;root.replaceChildren();root.className='';
+  if(payload.mission){
+    const holder=document.createElement('div');holder.className='mission-slot';
+    holder.style.height=(payload.card||126)+'px';
+    holder.append(missionCard(payload.mission));root.append(holder);
+  }
   const byRank=new Map(rows.map(row=>[row.rank,row]));
   for(let i=1;i<=10;i++){
     const slot=document.createElement('div');slot.className='slot';

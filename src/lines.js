@@ -119,4 +119,11 @@ function targetsFor(species,profiles){
   for(const p of profiles)if(key(p.name)===k||key(p.name.replace(/\s*\(.*\)$/,''))===k)names.add(p.name);
   return profiles.filter(p=>names.has(p.name));
 }
-module.exports={targetsFor,speciesKey:key};
+// First (cheapest) form of a competitive line: Garchomp → Gible.
+const BASE=new Map();
+for(const line of PRE.split('\n')){
+  const [final,pre]=line.split(':');
+  if(!BASE.has(final))BASE.set(final,pre.split(',')[0]);
+}
+function baseFor(name){return BASE.get(name)||null;}
+module.exports={targetsFor,baseFor,speciesKey:key};

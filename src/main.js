@@ -1,5 +1,5 @@
 'use strict';
-const {app,BrowserWindow,desktopCapturer,ipcMain,screen,clipboard,nativeImage}=require('electron');
+const {app,BrowserWindow,desktopCapturer,ipcMain,screen,clipboard,nativeImage,globalShortcut}=require('electron');
 const path=require('node:path');
 const crypto=require('node:crypto');
 const {openDatabase,identity}=require('./database');
@@ -15,6 +15,7 @@ const {sameVisibleOffers}=require('./page-identity');
 const {profileList,coverage,grade,validateOverrides}=require('./team');
 const fs=require('node:fs');
 const {createDigitBook,refineScan,applyDigitReads}=require('./cell-reader');
+const {createLearner}=require('./learning');
 
 if(!app.requestSingleInstanceLock())app.quit();
 // The overlay plays a short alert when a bargain appears, without a click.
@@ -25,6 +26,23 @@ let headerHash='',tableHash='',lastHeaderCheckedAt=0,lastTableCheckedAt=0,lastBa
   lastPublished=0,lastOverlayBounds='',startedAt=0,ocrFailures=0,emptyReads=0;
 let lastDisplayedRows=null,lastDisplayedLayout=null,lastPageSignature='',lastMarketImage=null;
 let marketCache=null,marketCacheAt=0;
+// 'hunt' = buscar gangas; 'learn' = misiones guiadas para llenar precios.
+let sessionKind='hunt',learner=null;
+const NEXT_KEY='Control+Alt+Right';
+function learnView(){return sessionKind==='learn'&&learner?learner.view():null;}
+function nextMission(){
+  if(!learner)return null;
+  const view=learner.next();
+  try{storage.applySettings({learnSkipped:learner.skipped().slice(-500)});}catch{}
+  lastPageSignature='';
+  publishLearn();
+  if(lastDisplayedRows)void showResults(lastDisplayedRows,sessionVersion,lastDisplayedLayout);
+  else void showCompact();
+  return view;
+}
+function publishLearn(){
+  setStatus({kind:sessionKind,learn:learnView(),missions:sessionKind==='learn'&&learner?learner.list():[]});
+}
 let digitBook=createDigitBook(),digitBookFile=null,lastReadStats=null;
 function loadDigitBook(folder){
   digitBookFile=path.join(folder,'digit-templates.json');
@@ -81,13 +99,15 @@ function compactFallback(){
 async function showCompact(label='Radar'){
   if(!sessionActive||!overlay||overlay.isDestroyed())return;
   const version=sessionVersion;
-  broadcast('radar:overlay',{mode:'compact',label});
+  const mission=learnView();
+  broadcast('radar:overlay',{mode:'compact',label,mission});
+  const width=mission?300:110,height=mission?132:32;
   const bounds=overlay.getBounds();
-  if(!overlay.isVisible() || bounds.width!==110 || bounds.height!==32)place(compactFallback());
+  if(!overlay.isVisible() || bounds.width!==width || bounds.height!==height)
+    place({...compactFallback(),x:compactFallback().x-(width-110),width,height});
   const game=captureAgent?.getGameRect() || screen.getPrimaryDisplay().workArea;
   if(!sessionActive||version!==sessionVersion||!game)return;
   const work=screen.getDisplayMatching(game).workArea;
-  const width=110,height=32;
   const x=Math.max(work.x,Math.min(work.x+work.width-width,Math.round(game.x+game.width*.82)));
   const y=Math.max(work.y,Math.min(work.y+work.height-height,Math.round(game.y+game.height*.155)));
   place({x,y,width,height});
@@ -114,16 +134,18 @@ async function showResults(rows,version,layout=null){
       game.height/pixel.frameHeight):
     Math.round(game.y+game.height*(auto?.firstRowTopNorm||.311));
   const work=screen.getDisplayMatching(game).workArea;
+  // In learn mode a mission card sits right above the first row.
+  const mission=learnView(),card=mission?126:0;
   const bounds={
     x:Math.max(work.x,Math.min(work.x+work.width-width,x)),
-    y:Math.max(work.y,Math.min(work.y+work.height-(10*step+10),y)),
-    width,height:10*step+10
+    y:Math.max(work.y,Math.min(work.y+work.height-(10*step+10+card),y-card)),
+    width,height:10*step+10+card
   };
   if(!sessionActive||sessionVersion!==version)return;
-  const signature=JSON.stringify(rows.map(r=>[r.rank,r.species,r.price,r.decision,r.score,
-    r.scoreKind,r.reason,r.reasonText]));
+  const signature=JSON.stringify([rows.map(r=>[r.rank,r.species,r.price,r.decision,r.score,
+    r.scoreKind,r.reason,r.reasonText]),mission]);
   if(signature!==lastPageSignature||lastOverlayBounds!==JSON.stringify(bounds)||!overlay.isVisible()){
-    broadcast('radar:overlay',{mode:'results',rows,step,scale});
+    broadcast('radar:overlay',{mode:'results',rows,step,scale,mission,card});
     lastPageSignature=signature;
   }
   lastDisplayedRows=rows;lastDisplayedLayout=layout;
@@ -462,6 +484,12 @@ async function tick(){
         return;
       }
     }
+    if(sessionKind==='learn'&&learner){
+      const visible=[...rows,...partials];
+      const present=(res.diagnosticRows||[]).filter(r=>r.state!=='missing').length;
+      if(learner.observe(visible,{fullPage:present>8})){lastPageSignature='';try{require('electron').shell.beep();}catch{}}
+      publishLearn();
+    }
     stage='overlay';
     if(decisions.length || (lastDisplayedRows&&!pageChanged)){
       const previous=new Map((lastDisplayedRows||[]).map(d=>[d.rank,d]));
@@ -507,14 +535,29 @@ function stopSession(){
   diagnostics?.markOcrStale();
   lastOverlayBounds='';lastPageSignature='';lastDisplayedRows=null;lastDisplayedLayout=null;lastMarketImage=null;
   overlay?.hide();
-  setStatus({state:'inactivo',message:'Radar detenido.',recognized:0,latency:null});
+  try{globalShortcut.unregister(NEXT_KEY);}catch{}
+  setStatus({state:'inactivo',message:'Radar detenido.',recognized:0,latency:null,learn:null,missions:[]});
 }
-async function startSession(){
-  if(sessionActive)return {ok:true,running:true};
+async function startSession(kind='hunt'){
+  kind=kind==='learn'?'learn':'hunt';
+  if(kind==='learn'){
+    learner=createLearner({profiles:PRIORITY_PROFILES,samplesFor:s=>storage.marketSamples(s),
+      skipped:storage.settings().learnSkipped||[]});
+    try{globalShortcut.unregister(NEXT_KEY);globalShortcut.register(NEXT_KEY,()=>nextMission());}catch{}
+  }else{learner=null;try{globalShortcut.unregister(NEXT_KEY);}catch{}}
+  const switching=sessionActive&&kind!==sessionKind;
+  sessionKind=kind;
+  if(sessionActive){
+    lastPageSignature='';publishLearn();
+    if(switching&&lastDisplayedRows)void showResults(lastDisplayedRows,sessionVersion,lastDisplayedLayout);
+    else if(switching)void showCompact();
+    return {ok:true,running:true,kind};
+  }
   sessionActive=true;sessionVersion++;startedAt=Date.now();
   mode='idle';headerHash='';tableHash='';lastHeaderCheckedAt=0;lastTableCheckedAt=0;lastBalanceReadAt=0;emptyReads=0;
   lastPageSignature='';lastDisplayedRows=null;lastDisplayedLayout=null;lastMarketImage=null;
   setStatus({state:'esperando',message:'Buscando pantalla de PokéMMO...',recognized:0,latency:null});
+  publishLearn();
   track('window','pending','WIN-000','Buscando PokéMMO');
   track('capture','pending','CAP-000','Esperando imagen');
   // Passive overlay: never intercepts game clicks or keyboard focus.
@@ -534,7 +577,9 @@ function handlers(){
     profiles,prices:storage.targetPrices(profiles),coverage:coverage(profiles),
     recent:recentEvaluated(profiles),history:storage.history(),trades:storage.transactionHistory(),
     balance:storage.latestBalance(),diagnostics:diagnostics?.snapshot()};});
-  ipcMain.handle('radar:play',()=>startSession());
+  ipcMain.handle('radar:play',()=>startSession('hunt'));
+  ipcMain.handle('radar:learn',()=>startSession('learn'));
+  ipcMain.handle('radar:nextMission',()=>nextMission());
   ipcMain.handle('radar:diagnostics',()=>diagnostics?.snapshot()||null);
   ipcMain.handle('radar:testEngines',async()=>{
     if(engineTesting)return {ok:false,error:'Ya hay una prueba en ejecución'};

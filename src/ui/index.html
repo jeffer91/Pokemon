@@ -10,7 +10,7 @@
 <main>
   <div class="playbar">
     <div class="playinfo"><strong id="state-message">Pulsa Play para iniciar.</strong><small id="latency">Listo</small></div>
-    <div class="actions"><button id="play" class="play"><span aria-hidden="true">▶</span> Play</button><button id="stop" class="stop" disabled>■ Stop</button></div>
+    <div class="actions"><button id="play" class="play" title="Marca COMPRA ESTE AHORA en las gangas"><span aria-hidden="true">▶</span> Cazar gangas</button><button id="learn" class="learn" title="Te dice qué buscar en el GTL para llenar la base de precios"><span aria-hidden="true">▶</span> Aprender precios</button><button id="stop" class="stop" disabled>■ Stop</button></div>
   </div>
   <nav aria-label="Secciones">
     <button class="tab active" data-tab="radar">Radar</button>
@@ -36,6 +36,13 @@
       <tbody id="listings"><tr><td colspan="6">Sin datos todavía</td></tr></tbody></table></div>
     </div>
     <div class="tip" id="radar-tip">La base se alimentará mientras revisas el GTL.</div>
+    <div class="panel" id="learn-panel">
+      <div class="heading"><h2>Aprender precios</h2><span id="learn-count">Pulsa «Aprender precios»</span></div>
+      <div id="learn-current" class="learn-current">Cada misión es una Búsqueda Avanzada: especie, naturaleza y los IV en 31 que pide el ideal. Aplícala en el GTL, ordena por precio y mira 2–3 páginas. Con 8 anuncios distintos la misión se completa y pasa sola a la siguiente.</div>
+      <div class="learn-actions"><button id="next-mission" class="ghost" disabled>Saltar misión (Ctrl+Alt+→)</button></div>
+      <div class="scroll"><table><thead><tr><th>Próximas misiones</th><th>Filtros</th><th>Datos</th><th>Para</th></tr></thead>
+      <tbody id="missions"><tr><td colspan="4">—</td></tr></tbody></table></div>
+    </div>
   </section>
   <section class="page" data-page="equipo" hidden>
     <div class="panel">

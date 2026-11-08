@@ -4,6 +4,8 @@ const allowedEvents=new Set(['radar:status','radar:data','radar:overlay','radar:
 contextBridge.exposeInMainWorld('radar',{
   getState:()=>ipcRenderer.invoke('radar:getState'),
   play:()=>ipcRenderer.invoke('radar:play'),
+  learn:()=>ipcRenderer.invoke('radar:learn'),
+  nextMission:()=>ipcRenderer.invoke('radar:nextMission'),
   stop:()=>ipcRenderer.invoke('radar:stop'),
   getDiagnostics:()=>ipcRenderer.invoke('radar:diagnostics'),
   copyDiagnostics:()=>ipcRenderer.invoke('radar:copyDiagnostics'),
