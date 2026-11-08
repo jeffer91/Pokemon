@@ -125,6 +125,45 @@ function cellRect(cells,img,rank,j){
   return {x:(cx-hw-crop.x)*kx,y:(cy-hh-crop.y)*ky,width:2*hw*kx,height:2*hh*ky};
 }
 
+// Rectangle of a text column (name, nature, price) for one row.
+function textCellRect(cells,img,rank,[x0,x1]){
+  const {panel,crop}=cells;
+  const kx=img.width/crop.width,ky=img.height/crop.height;
+  const cy=panel.y+cells.rowCenters[rank-1]*panel.width,hh=cells.rowHalf*panel.width;
+  return clampRect({x:(panel.x+x0*panel.width-crop.x)*kx+4,y:(cy-hh-crop.y)*ky,
+    width:(x1-x0)*panel.width*kx-8,height:2*hh*ky},img.width,img.height);
+}
+// Which text cells of the partial rows deserve a single-line re-read.
+function pendingTextCells(parsed,img){
+  const cells=parsed?.cells,out=[];
+  if(!cells?.cols||!img)return out;
+  for(const e of parsed.partialRows||[]){
+    const miss=new Set(e.missingFields||[]);
+    if(miss.has('ESPECIE')||miss.has('NIVEL'))out.push({rank:e.rank,field:'name',rect:textCellRect(cells,img,e.rank,cells.cols.name)});
+    if(miss.has('NATURALEZA'))out.push({rank:e.rank,field:'nature',rect:textCellRect(cells,img,e.rank,[cells.cols.nature[0]-.014,cells.cols.nature[1]])});
+    if(miss.has('PRECIO'))out.push({rank:e.rank,field:'price',rect:textCellRect(cells,img,e.rank,cells.cols.price)});
+  }
+  return out.filter(c=>c.rect);
+}
+// reads: [{rank,field,value}] already parsed (name → {species,level}).
+function applyTextReads(parsed,reads=[]){
+  if(!reads.length)return parsed;
+  const entries=[...(parsed.rows||[]),...(parsed.partialRows||[])].map(e=>({...e,ivs:[...e.ivs],
+    missingFields:[...(e.missingFields||[])]}));
+  const drop=(e,f)=>{e.missingFields=e.missingFields.filter(x=>x!==f);};
+  for(const r of reads){
+    const e=entries.find(x=>x.rank===r.rank);
+    if(!e||!r.value)continue;
+    if(r.field==='name'){
+      if(r.value.species&&(!e.species||e.missingFields.includes('ESPECIE'))){e.species=r.value.species;drop(e,'ESPECIE');}
+      if(Number.isInteger(r.value.level)&&e.missingFields.includes('NIVEL')){e.level=r.value.level;drop(e,'NIVEL');}
+    }else if(r.field==='nature'){e.nature=r.value;drop(e,'NATURALEZA');}
+    else if(r.field==='price'&&Number.isSafeInteger(r.value)&&r.value>0){e.price=r.value;e.priceReliable=true;drop(e,'PRECIO');}
+    if(!e.missingFields.length)e.missingFields=['VALIDACION'];
+  }
+  return finalize(parsed,entries);
+}
+
 function finalize(parsed,entries){
   const rows=[],partialRows=[];
   for(const e of entries){
@@ -136,12 +175,14 @@ function finalize(parsed,entries){
     else partialRows.push({...base,priceReliable:e.priceReliable??e.ocrReliable===true,
       missing:missingFields[0]||'VALIDACION',missingFields:missingFields.length?missingFields:['VALIDACION']});
   }
-  return {...parsed,rows,partialRows,diagnosticRows:diagnosticRowsFor(rows,partialRows)};
+  return {...parsed,rows,partialRows,diagnosticRows:diagnosticRowsFor(rows,partialRows,parsed.visibleRows??10)};
 }
-function diagnosticRowsFor(rows,partialRows){
+function diagnosticRowsFor(rows,partialRows,visibleRows=10){
   const byRank=new Map([...rows,...partialRows].map(r=>[r.rank,r]));
   return Array.from({length:10},(_,i)=>{
     const r=byRank.get(i+1);
+    if(!r&&i>=visibleRows)return {rank:i+1,species:'—',level:null,nature:null,price:null,
+      ivs:Array(6).fill(null),ivSources:null,state:'empty',missingFields:['FILA_VACIA']};
     return {rank:i+1,species:r?.species||'—',level:r?.level??null,
       nature:r?.nature||null,price:r?.price??null,
       ivs:r?.ivs||Array(6).fill(null),ivSources:r?.ivSources||null,
@@ -206,5 +247,15 @@ function applyDigitReads(parsed,reads=[],{allow31=false}={}){
   return finalize(parsed,entries);
 }
 
-module.exports={classifyCell,createDigitBook,refineScan,applyDigitReads,cellRect,
+// Tesseract reads dark text on a light background far better than the GTL's
+// light-on-dark cells ("alegre" 47% → 96%). Returns an inverted grey BGRA copy.
+function invertForOcr(bitmap){
+  const out=Buffer.alloc(bitmap.length);
+  for(let k=0;k<bitmap.length;k+=4){
+    const v=255-Math.round(.114*bitmap[k]+.587*bitmap[k+1]+.299*bitmap[k+2]);
+    out[k]=out[k+1]=out[k+2]=v;out[k+3]=255;
+  }
+  return out;
+}
+module.exports={invertForOcr,pendingTextCells,applyTextReads,textCellRect,classifyCell,createDigitBook,refineScan,applyDigitReads,cellRect,
   diagnosticRowsFor,finalize,glyphsFrom,IV_FIELDS};

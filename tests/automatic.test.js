@@ -51,7 +51,7 @@ test('catalog batch, live market research and inline ownership are connected',()
   const main=read('src/main.js'),db=read('src/database.js');
   const html=read('src/ui/index.html'),ui=read('src/ui/app.js');
   const team=read('src/team.js'),catalog=read('src/catalog.js'),research=read('src/research.js');
-  assert.match(main,/storage\.marketIntelligence\(\)/);
+  assert.match(main,/storage\.marketIntelligence\(\{spendable:/);
   assert.match(main,/storage\.catalogProfiles\(\)/);
   assert.match(db,/CREATE TABLE IF NOT EXISTS catalog_profiles/);
   assert.match(db,/PRAGMA user_version=5/);

@@ -160,10 +160,13 @@ function openDatabase(folder) {
       const now=Date.now();stmt.run(key,row.species,row.level,row.price,row.state,now,now);
     }db.exec('COMMIT');}catch(e){db.exec('ROLLBACK');throw e;}
   }
-  function ownListings(){return db.prepare('SELECT * FROM own_listings ORDER BY last_seen DESC LIMIT 100').all().map(row=>{
-    const sales=db.prepare("SELECT count(*) count, avg(price-fee) net FROM transactions WHERE kind='SELL' AND lower(species)=lower(?)").get(row.species);
-    return {...row,confirmedSales:sales.count,averageNet:sales.net===null?null:Math.round(sales.net)};
-  });}
+  // One grouped query for every species instead of one query per listing.
+  const ownListingsQuery=db.prepare(`SELECT o.*,coalesce(s.count,0) confirmed_sales,s.net average_net
+    FROM own_listings o LEFT JOIN (SELECT lower(species) sp,count(*) count,avg(price-fee) net
+      FROM transactions WHERE kind='SELL' GROUP BY lower(species)) s ON s.sp=lower(o.species)
+    ORDER BY o.last_seen DESC LIMIT 100`);
+  function ownListings(){return ownListingsQuery.all().map(({confirmed_sales,average_net,...row})=>
+    ({...row,confirmedSales:confirmed_sales,averageNet:average_net===null?null:Math.round(average_net)}));}
   const check=db.prepare('PRAGMA quick_check').get();
   if(Object.values(check)[0] !== 'ok') throw new Error('La base SQLite no superó la comprobación de integridad.');
   const setStmt=db.prepare('INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value');
@@ -279,11 +282,11 @@ function openDatabase(folder) {
     ORDER BY last_seen DESC LIMIT 500`);
   const marketRows=db.prepare(`SELECT species,level,nature,sex,price,ivs_json,last_seen,seen_count,verified
     FROM listings WHERE last_seen>=? ORDER BY last_seen DESC LIMIT 2500`);
-  function marketIntelligence(){
+  function marketIntelligence(options={}){
     const rows=marketRows.all(Date.now()-7*86400000).map(r=>({
       ...r,ivs:JSON.parse(r.ivs_json),lastSeen:r.last_seen
     }));
-    return suggestedSearches(rows);
+    return suggestedSearches(rows,Date.now(),options);
   }
   function catalogProfiles(){
     return db.prepare('SELECT profile_json FROM catalog_profiles ORDER BY rowid').all()

@@ -46,7 +46,7 @@ function profileFit(row,profiles=[]){
 // page against hundreds of stored samples stays far below one millisecond.
 const keyCache=new Map();
 function classKeys(row,profiles){
-  const id=row.species+'|'+row.nature+'|'+(row.ivs||[]).join(',')+'|'+profiles.length;
+  const id=row.species+'|'+row.nature+'|'+(row.ivs||[]).join(',')+'|'+(row.level===1?1:0)+'|'+profiles.length;
   const hit=keyCache.get(id);
   if(hit)return hit;
   const out=computeKeys(row,profiles);
@@ -56,10 +56,14 @@ function classKeys(row,profiles){
 }
 function computeKeys(row,profiles){
   const fit=profileFit(row,profiles);
-  const sp=speciesKey(row.species),t=Math.min(5,fit.total31);
-  if(fit.best)return {fit,exact:[sp,fit.best.natureOk?'N':'n',fit.best.reqHits,t].join('|'),
-    loose:[sp,fit.best.reqHits,t].join('|')};
-  return {fit,exact:[sp,normalizedNature(row.nature),t].join('|'),loose:[sp,t].join('|')};
+  // Exact number of 31s (a 6×31 is never priced like a 5×31) and level band:
+  // breeders pay for level 1, battlers for trained ones.
+  const sp=speciesKey(row.species),t=fit.total31,lv=row.level===1?'L1':'Lx';
+  // Ditto is priced by how many perfect IVs it has, whatever its nature.
+  if(sp==='ditto')return {fit,exact:[sp,t].join('|'),loose:[sp,t].join('|')};
+  if(fit.best)return {fit,exact:[sp,fit.best.natureOk?'N':'n',fit.best.reqHits,t,lv].join('|'),
+    loose:[sp,fit.best.reqHits,t,lv].join('|')};
+  return {fit,exact:[sp,normalizedNature(row.nature),t,lv].join('|'),loose:[sp,t,lv].join('|')};
 }
 function dealScore(net){
   if(!Number.isFinite(net)||net<1000)return 0;

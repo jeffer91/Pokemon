@@ -4,6 +4,7 @@ const path=require('node:path');
 const crypto=require('node:crypto');
 const {openDatabase,identity}=require('./database');
 const {assess}=require('./brain');
+const {availableToSpend}=require('./market');
 const {PRIORITY_PROFILES}=require('./priority-profiles');
 const {createRecognizer}=require('./recognition');
 const {locateWindow,captureNative}=require('./window-locator');
@@ -14,7 +15,15 @@ const {createGameCapture}=require('./capture-source');
 const {sameVisibleOffers}=require('./page-identity');
 const {profileList,coverage,grade,validateOverrides}=require('./team');
 const fs=require('node:fs');
-const {createDigitBook,refineScan,applyDigitReads}=require('./cell-reader');
+const {createDigitBook,refineScan,applyDigitReads,pendingTextCells,applyTextReads,invertForOcr}=require('./cell-reader');
+// Crop → inverted grey PNG for the single-cell OCR passes.
+function cellPng(source,rect,minHeight=0){
+  let img=source.crop(rect);
+  if(minHeight&&rect.height<minHeight)img=img.resize({height:minHeight,quality:'best'});
+  const size=img.getSize();
+  return nativeImage.createFromBitmap(invertForOcr(img.toBitmap()),{width:size.width,height:size.height}).toPNG();
+}
+const {parseNameCell,fuzzyNature,parseMoney}=require('./recognition');
 const {createLearner}=require('./learning');
 
 if(!app.requestSingleInstanceLock())app.quit();
@@ -27,7 +36,7 @@ let headerHash='',tableHash='',lastHeaderCheckedAt=0,lastTableCheckedAt=0,lastBa
 let lastDisplayedRows=null,lastDisplayedLayout=null,lastPageSignature='',lastMarketImage=null;
 let marketCache=null,marketCacheAt=0;
 // 'hunt' = buscar gangas; 'learn' = misiones guiadas para llenar precios.
-let sessionKind='hunt',learner=null;
+let sessionKind='hunt',learner=null,lastPageFrom=null;
 const NEXT_KEY='Control+Alt+Right';
 function learnView(){return sessionKind==='learn'&&learner?learner.view():null;}
 function nextMission(){
@@ -75,6 +84,15 @@ function createWindows(){
   protect(dashboard);dashboard.loadFile(path.join(__dirname,'ui','index.html'));
   dashboard.once('ready-to-show',()=>dashboard.show());
   dashboard.on('closed',()=>{dashboard=null;app.quit();});
+  // The overlay belongs on top of the game, never on top of PokéRadar itself
+  // (it used to cover the Play/Stop buttons).
+  dashboard.on('focus',()=>{if(overlay&&!overlay.isDestroyed())overlay.hide();});
+  dashboard.on('blur',()=>{
+    if(!sessionActive||!overlay||overlay.isDestroyed())return;
+    lastOverlayBounds='';
+    if(lastDisplayedRows)void showResults(lastDisplayedRows,sessionVersion,lastDisplayedLayout);
+    else void showCompact();
+  });
   overlay=new BrowserWindow({
     width:112,height:34,frame:false,transparent:true,show:false,hasShadow:false,
     resizable:false,movable:false,focusable:false,skipTaskbar:true,alwaysOnTop:true,
@@ -88,6 +106,7 @@ function createWindows(){
 }
 function place(rect){
   if(!overlay||overlay.isDestroyed()||!sessionActive)return;
+  if(dashboard&&!dashboard.isDestroyed()&&dashboard.isFocused()){overlay.hide();return;}
   const next=JSON.stringify(rect);
   if(lastOverlayBounds!==next){overlay.setBounds(rect,false);lastOverlayBounds=next;}
   if(!overlay.isVisible())overlay.showInactive();
@@ -114,7 +133,7 @@ async function showCompact(label='Radar'){
 }
 async function showResults(rows,version,layout=null){
   if(!sessionActive||sessionVersion!==version||!overlay||overlay.isDestroyed())return;
-  if(!rows.length)return; // Keep the last page visible during a transient OCR failure.
+  if(!rows.length&&!learnView())return; // Keep the last page visible during a transient OCR failure.
   const game=captureAgent?.getGameRect() || screen.getPrimaryDisplay().workArea;
   if(!sessionActive||sessionVersion!==version)return;
   if(!game)return showCompact();
@@ -143,7 +162,7 @@ async function showResults(rows,version,layout=null){
   };
   if(!sessionActive||sessionVersion!==version)return;
   const signature=JSON.stringify([rows.map(r=>[r.rank,r.species,r.price,r.decision,r.score,
-    r.scoreKind,r.reason,r.reasonText]),mission]);
+    r.scoreKind,r.reason,r.reasonText,r.learn]),mission]);
   if(signature!==lastPageSignature||lastOverlayBounds!==JSON.stringify(bounds)||!overlay.isVisible()){
     broadcast('radar:overlay',{mode:'results',rows,step,scale,mission,card});
     lastPageSignature=signature;
@@ -176,7 +195,7 @@ function publishData(force=false){
   const summary=storage.summary();
   const prices=storage.targetPrices(profiles);
   if(!marketCache||now-marketCacheAt>=15000){
-    marketCache=storage.marketIntelligence();marketCacheAt=now;
+    marketCache=storage.marketIntelligence({spendable:availableToSpend(storage.latestBalance())});marketCacheAt=now;
   }
   summary.research=marketCache.suggestions;
   summary.activity=marketCache.activity;
@@ -189,17 +208,21 @@ function publishData(force=false){
 }
 function imageHash(png){return crypto.createHash('sha1').update(png).digest('hex');}
 function materiallyDifferent(previous,current){
+  // Two GTL pages of the same search differ only in a few digits, so compare a
+  // finer thumbnail and react to 0.8 % of changed pixels. The table is static
+  // (no animations), so hover/cursor noise stays well below that.
   try{
-    const a=previous.resize({width:140,height:70,quality:'good'}).toBitmap();
-    const b=current.resize({width:140,height:70,quality:'good'}).toBitmap();
+    const W=320,H=160;
+    const a=previous.resize({width:W,height:H,quality:'good'}).toBitmap();
+    const b=current.resize({width:W,height:H,quality:'good'}).toBitmap();
     if(a.length!==b.length)return true;
     let changed=0,count=0;
-    for(let y=5;y<64;y+=2)for(let x=10;x<105;x+=2){
-      const i=(y*140+x)*4;
+    for(let y=8;y<H-6;y++)for(let x=4;x<W-4;x++){
+      const i=(y*W+x)*4;
       const delta=Math.abs(a[i]-b[i])+Math.abs(a[i+1]-b[i+1])+Math.abs(a[i+2]-b[i+2]);
-      count++;if(delta>=85)changed++;
+      count++;if(delta>=90)changed++;
     }
-    return count>0 && changed/count>.13;
+    return count>0 && changed/count>.008; // measured: same page ≤0.03 %, next page ≈2.2 %
   }catch{return true;}
 }
 function cropped(picture,width,height,part){
@@ -357,13 +380,28 @@ async function tick(){
       let cellOcr=0;
       const pending=refined.pending.slice(0,14);
       if(pending.length){
-        const crops=pending.map(p=>enlarged.crop(p.rect).resize({height:Math.max(40,p.rect.height),quality:'best'}).toPNG());
+        const crops=pending.map(p=>cellPng(enlarged,p.rect,40));
         const values=await recognizer.readDigits(crops);
         const reads=pending.map((p,i)=>({rank:p.rank,j:p.j,value:values[i]})).filter(r=>r.value!==null);
         cellOcr=reads.length;
         res=applyDigitReads(res,reads,{allow31:!refined.stats.anyGreen});
       }
-      lastReadStats={...refined.stats,cellOcr,templates:digitBook.size()};
+      // Second chance for text cells (name/level, nature, price) of partial rows.
+      const textCells=pendingTextCells(res,{width:enlargedSize.width,height:enlargedSize.height}).slice(0,12);
+      let textFixed=0;
+      if(textCells.length){
+        const lines=await recognizer.readLines(textCells.map(c=>cellPng(enlarged,c.rect)));
+        const reads=textCells.map((c,i)=>{
+          const t=lines[i]?.text||'';
+          const value=c.field==='name'?parseNameCell(t):c.field==='nature'?fuzzyNature(t.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z]/g,'')):
+            parseMoney(t);
+          const ok=c.field==='name'?!!(value?.species||value?.level):!!value;
+          return ok?{rank:c.rank,field:c.field,value}:null;
+        }).filter(Boolean);
+        textFixed=reads.length;
+        res=applyTextReads(res,reads);
+      }
+      lastReadStats={...refined.stats,cellOcr,textFixed,templates:digitBook.size()};
       saveDigitBook();
       if(!sessionActive||version!==sessionVersion)return;
     }
@@ -391,14 +429,18 @@ async function tick(){
     };
     const rows=(res.rows||[]).map(enrichSex);
     const partials=(res.partialRows||[]).map(enrichSex);
-    const rowsStillMatch=pageChanged?false:
+    // The footer ("Mostrando 11 a 20 de 81") proves a page turn even when two
+    // pages look alike (same species, same nature, only digits differ).
+    const pageMoved=!!res.pageInfo&&lastPageFrom!==null&&res.pageInfo.from!==lastPageFrom;
+    if(res.pageInfo)lastPageFrom=res.pageInfo.from;
+    const rowsStillMatch=pageChanged||pageMoved?false:
       sameVisibleOffers(lastDisplayedRows||[],[...rows,...partials]);
     if(!rowsStillMatch){
       lastDisplayedRows=null;lastPageSignature='';
     }
     diagnostics?.setOcrRows(res.diagnosticRows||[],(res.sort||'unknown')+' · '+(capture.via||'captura')+
       (lastReadStats?' · verde '+lastReadStats.color+', plantillas '+lastReadStats.template+
-        ', celdas '+lastReadStats.cellOcr+', corregidos '+lastReadStats.corrected+
+        ', celdas '+lastReadStats.cellOcr+', textos '+lastReadStats.textFixed+', corregidos '+lastReadStats.corrected+
         ', dígitos aprendidos '+lastReadStats.templates+'/10':''));
     broadcast('radar:diagnostics',diagnostics?.snapshot());
     const balance=storage.latestBalance();
@@ -431,7 +473,7 @@ async function tick(){
       decisions.push({...pick(row),...ev});
     }
     const actionable=decisions.filter(d=>d.decision!=='SILENCIO').length;
-    for(const d of decisions)if(d.decision==='COMPRAR')bargains.push(d);
+    if(sessionKind!=='learn')for(const d of decisions)if(d.decision==='COMPRAR')bargains.push(d);
     track('engine',balance===null?'warn':'ok',balance===null?'ECO-001':'ECO-OK',
       balance===null?'Saldo no reconocido; puntuación IV disponible':
         'Evaluadas '+rows.length+' ofertas; '+actionable+' decisiones');
@@ -447,7 +489,7 @@ async function tick(){
         saved.saved+' anuncios y '+saved.partial+' parciales almacenados');
       for(const row of rows){
         const ev=decisions.find(d=>d.rank===row.rank);
-        if(ev?.decision&&ev.decision!=='SILENCIO')
+        if(sessionKind!=='learn'&&ev?.decision&&ev.decision!=='SILENCIO')
           storage.recordRecommendation(row,ev,context);
       }
       publishData(true);
@@ -484,27 +526,34 @@ async function tick(){
         return;
       }
     }
+    // Rows that physically exist on this page (a short last page has fewer).
+    const existing=new Set((res.diagnosticRows||[]).filter(r=>r.state!=='empty').map(r=>r.rank));
+    let shown=decisions;
     if(sessionKind==='learn'&&learner){
+      // Learning never buys: labels say whether each row counts for the mission.
       const visible=[...rows,...partials];
-      const present=(res.diagnosticRows||[]).filter(r=>r.state!=='missing').length;
-      if(learner.observe(visible,{fullPage:present>8})){lastPageSignature='';try{require('electron').shell.beep();}catch{}}
+      if(learner.observe(visible,{pageInfo:res.pageInfo})){lastPageSignature='';try{require('electron').shell.beep();}catch{}}
+      shown=learner.labels(visible);
       publishLearn();
     }
     stage='overlay';
-    if(decisions.length || (lastDisplayedRows&&!pageChanged)){
+    if(shown.length || (lastDisplayedRows&&!pageChanged)){
       const previous=new Map((lastDisplayedRows||[]).map(d=>[d.rank,d]));
-      const current=new Map(decisions.map(d=>[d.rank,d]));
-      // A temporary OCR miss must not erase a previously evaluated row.
+      const current=new Map(shown.map(d=>[d.rank,d]));
+      // A temporary OCR miss must not erase a previously evaluated row, but a
+      // row that does not exist on this page never keeps an old label.
       if(!pageChanged&&rowsStillMatch)for(const [rank,prior] of previous){
+        if(!existing.has(rank)||(prior.learn!==undefined)!==(sessionKind==='learn'))continue;
         const incoming=current.get(rank);
-        if(!incoming||(incoming.decision==='SILENCIO'&&incoming.score===null))
-          current.set(rank,prior);
+        if(!incoming||(incoming.decision==='SILENCIO'&&incoming.score===null)||incoming.learn==='reading')
+          current.set(rank,prior.learn==='reading'&&incoming?incoming:prior);
       }
+      for(const rank of [...current.keys()])if(!existing.has(rank))current.delete(rank);
       await showResults([...current.values()].sort((a,b)=>a.rank-b.rank),version,res.layout||lastDisplayedLayout);
     }
     setStatus({state:'activo',
       message:rows.length+'/10 leídos · '+saved.saved+' guardados'+
-        (bargains.length?' · ¡'+bargains.length+' ganga'+(bargains.length>1?'s':'')+'!':
+        (sessionKind==='learn'?' · aprendiendo':bargains.length?' · ¡'+bargains.length+' ganga'+(bargains.length>1?'s':'')+'!':
           actionable?' · '+actionable+' decisiones':' · recopilando precios'),
       recognized:rows.length,latency:Math.round(performance.now()-start)});
   }catch(error){
@@ -533,7 +582,7 @@ function stopSession(){
   sessionActive=false;sessionVersion++;clearTimeout(scanTimer);
   mode='idle';headerHash='';tableHash='';lastHeaderCheckedAt=0;lastTableCheckedAt=0;
   diagnostics?.markOcrStale();
-  lastOverlayBounds='';lastPageSignature='';lastDisplayedRows=null;lastDisplayedLayout=null;lastMarketImage=null;
+  lastOverlayBounds='';lastPageSignature='';lastDisplayedRows=null;lastDisplayedLayout=null;lastMarketImage=null;lastPageFrom=null;
   overlay?.hide();
   try{globalShortcut.unregister(NEXT_KEY);}catch{}
   setStatus({state:'inactivo',message:'Radar detenido.',recognized:0,latency:null,learn:null,missions:[]});
@@ -569,7 +618,7 @@ function handlers(){
   ipcMain.handle('radar:getState',()=>{
     const profiles=profileList(storage.settings().teamOverrides);
     const summary=storage.summary();
-    const intelligence=storage.marketIntelligence();
+    const intelligence=storage.marketIntelligence({spendable:availableToSpend(storage.latestBalance())});
     summary.research=intelligence.suggestions;
     summary.activity=intelligence.activity;
     return {status,settings:storage.settings(),summary,catalog:storage.catalogProfiles(),

@@ -25,7 +25,7 @@ const TEAM=[
     provisional:id==='scolipede'||id==='garchomp'}));
 const INDEX=new Map(TEAM.map(p=>[p.id,p]));
 const IV_LABELS=['PS','At','Def','AtEsp','DefEsp','Vel'];
-const NATURES=new Set(('fuerte hurana audaz firme picara osada docil placida agitada floja miedosa activa seria alegre ingenua modesta afable mansa timida alocada serena amable grosera cauta rara').split(' '));
+const {NATURES}=require('./market');
 const STATUSES=new Set(['pendiente','propio','criando','cotizando']);
 function profileList(overrides={}){
   return TEAM.map(target=>{

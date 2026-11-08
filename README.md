@@ -1,4 +1,4 @@
-# PokéRadar GTL — v0.10.0
+# PokéRadar GTL — v0.11.0
 
 Aplicación de escritorio Electron para Windows 11. **Play** inicia una sesión de lectura visual del GTL, sin formularios de cuota ni posiciones X/Y, y muestra un pequeño radar flotante. No realiza compras ni controla el cliente del juego.
 
@@ -231,3 +231,30 @@ Nota: la alineación de las etiquetas flotantes depende de la geometría detecta
   - **Ctrl+Alt+→** salta la misión. También hay un botón en la pestaña Radar, con la lista de las próximas misiones.
   - Las gangas se siguen marcando mientras aprendes. Todo lo que se lee alimenta el precio de reventa del cerebro.
 - Puedes cambiar de modo sin detener el radar.
+
+## v0.11.0 — Lectura 10/10, aprender sin comprar y sin etiquetas fantasma
+
+**Lectura.** Probada con capturas reales de 1920×1080: de 1/10 filas completas a **10/10** en todas las páginas probadas.
+- «Nv. 100» se leía como «Nv» «.» «100» o «Nv .51» y se perdía la especie. Ahora se aceptan todas esas formas, y la basura del borde de la celda («| Nv. 1 Gligar É») se descarta.
+- **Segunda lectura por celda** para especie y nivel, naturaleza o precio que falten. Los recortes se invierten a texto oscuro sobre fondo claro, con lo que Tesseract pasa de leer «El» con 47 % a «alegre» con 96 %. Lo mismo se aplica a los IVs dudosos.
+- Una naturaleza con la primera letra cortada («egre») se recupera solo si existe una única candidata.
+- El pie **«Mostrando X a Y de Z»** se lee: ya no se toma por una fila, se sabe qué filas existen y cuándo es la última página.
+
+**Etiquetas fantasma.**
+- El cambio de página se detecta con una miniatura más fina, calibrada con capturas reales (misma página ≤0,03 % de cambio, página siguiente ≈2,2 %; umbral 0,8 %), y además por el pie de página.
+- Una fila que no existe en la página nunca conserva una etiqueta vieja.
+
+**Aprender precios (sin comprar).**
+- Cada fila muestra solo **✓ GUARDADO**, **✗ NO CUENTA** (con el motivo: otra especie, naturaleza, le falta un 31, nivel) o **… LEYENDO**. No hay presupuesto ni decisiones de compra, y no se registran recomendaciones.
+- Cuentan también las lecturas parciales que ya tienen especie, naturaleza, los 31 requeridos y precio; cada anuncio cuenta una sola vez.
+- La misión termina con 8 anuncios o al llegar a la **última página** de la búsqueda.
+- Misiones nuevas para **Ditto** (6, 5 y 4 IVs en 31, cualquier naturaleza).
+- La tarjeta y las etiquetas se ocultan mientras la ventana de PokéRadar está al frente.
+
+**Cazar gangas.**
+- Clases exactas: 6×31 ya no se mezcla con 5×31, ni nivel 1 con nivel entrenado. Ditto se agrupa por número de 31.
+- La pestaña Buscar sugiere primero búsquedas **dentro de tu presupuesto** con precios dispersos.
+
+**Mantenimiento.** Lista de naturalezas centralizada en `market.js`; la consulta de Tus Anuncios hace una sola consulta en lugar de una por anuncio.
+
+**Pendiente:** el sexo aún no influye en el puntaje.

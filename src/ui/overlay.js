@@ -54,10 +54,10 @@ window.radar.on('radar:overlay',payload=>{
   }
   const rows=(payload.rows||[]).map(row=>({
     rank:row.rank,decision:row.decision,score:row.score,scoreKind:row.scoreKind,
-    reasonText:row.reasonText,reason:row.reason,species:row.species,price:row.price
+    reasonText:row.reasonText,reason:row.reason,species:row.species,price:row.price,learn:row.learn
   }));
   let fresh=false;
-  for(const row of rows)if(row.decision==='COMPRAR'){
+  for(const row of rows)if(row.decision==='COMPRAR'&&!row.learn){
     const key=row.rank+'|'+row.species+'|'+row.price;
     if(!announced.has(key)){announced.add(key);fresh=true;}
   }
@@ -76,7 +76,21 @@ window.radar.on('radar:overlay',payload=>{
     const slot=document.createElement('div');slot.className='slot';
     slot.style.height=payload.step+'px';
     const item=byRank.get(i);
-    if(item && item.reason!=='LECTURA_INCOMPLETA' && item.reason!=='PRECIO_NO_LEIDO'){
+    if(item && item.learn){
+      // Learning mode: never a buy/budget label, only whether the row counts.
+      const pill=document.createElement('div');
+      pill.className='decision '+(item.learn==='ok'?'learn-ok':item.learn==='no'?'rest':'pending')+
+        (payload.step<38?' dense':'');
+      const upper=document.createElement('div');upper.className='decision-top';
+      const mark=document.createElement('strong');
+      mark.textContent=item.learn==='ok'?'✓':item.learn==='no'?'✗':'…';
+      const state=document.createElement('strong');
+      state.textContent=item.learn==='ok'?'GUARDADO':item.learn==='no'?'NO CUENTA':'LEYENDO';
+      upper.append(mark,state);
+      const why=document.createElement('span');why.className='decision-reason';
+      why.textContent=String(item.reasonText||'').slice(0,40);
+      pill.append(upper,why);slot.append(pill);
+    }else if(item && item.reason!=='LECTURA_INCOMPLETA' && item.reason!=='PRECIO_NO_LEIDO'){
       const pill=document.createElement('div');
       pill.className='decision '+(item.decision==='COMPRAR'?'buy':
         item.reason==='RESERVA_30_POR_CIENTO'?'reject':

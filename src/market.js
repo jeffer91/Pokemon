@@ -95,4 +95,4 @@ function researchSuggestions(stats = {}) {
   if ((stats.oldSamples || 0) > 30) list.push({key:'refresh',title:'Actualizar búsquedas antiguas',detail:'Obtén referencias recientes para evitar precios desactualizados.'});
   return list.slice(0, 5);
 }
-module.exports = {evaluate, validListing, validPrice, comparable, median, signature, saleFee, availableToSpend, researchSuggestions, RESERVE_RATIO, normalizedNature};
+module.exports={NATURES,evaluate, validListing, validPrice, comparable, median, signature, saleFee, availableToSpend, researchSuggestions, RESERVE_RATIO, normalizedNature};

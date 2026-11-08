@@ -1,88 +1,130 @@
 'use strict';
-// "Aprender precios": guided searches that fill the database with the prices
-// the brain needs. Each mission is one GTL Advanced Search the player applies:
-// species + nature + required 31s, sorted by price. The radar reads the pages
-// as usual; a mission is done when enough distinct ads of that class are stored
-// (or when the search shows fewer than a full page: the market has no more).
+// "Aprender precios": guided searches that fill the database with prices.
+// Learning never buys: every row gets a learning label (saved / does not count
+// / still reading), never a buy or budget decision.
+// A mission = one GTL search: species + nature + required 31s (+ level 1 for
+// breeding bases). It ends with GOAL distinct matching ads, or when the
+// player reaches the last page of the search ("Mostrando X a Y de Y").
 const {baseFor,speciesKey}=require('./lines');
 const {normalizedNature}=require('./market');
 const {IV_NAMES}=require('./catalog');
 
 const GOAL=8;
+const IV_FIELDS=['IV_PS','IV_ATAQUE','IV_DEFENSA','IV_ATAQUE_ESP','IV_DEFENSA_ESP','IV_VELOCIDAD'];
 
 function cleanSpecies(name){return String(name||'').replace(/\s*\(.*\)$/,'').trim();}
+const count31=ivs=>(ivs||[]).filter(v=>v===31).length;
 
 function buildMissions(profiles=[]){
   const missions=[],seen=new Set();
-  const add=(species,p,level1,priority)=>{
-    const id=[speciesKey(species),normalizedNature(p.nature),p.requiredIvs.join('-'),level1?'n1':'x'].join('|');
-    if(seen.has(id))return;
-    seen.add(id);
-    missions.push({id,species,nature:p.nature,ivs:[...p.requiredIvs],level1,target:p.name,priority,
-      filters:[...p.requiredIvs.map(i=>IV_NAMES[i]+' 31'),'Naturaleza '+p.nature,...(level1?['Nivel 1']:[])],
-      sort:'Precio (más barato primero)'});
-  };
+  const add=m=>{if(!seen.has(m.id)){seen.add(m.id);missions.push(m);}};
+  const profileMission=(species,p,level1,priority)=>add({
+    id:[speciesKey(species),normalizedNature(p.nature),p.requiredIvs.join('-'),level1?'n1':'x'].join('|'),
+    species,nature:p.nature,ivs:[...p.requiredIvs],level1,target:p.name,priority,
+    filters:[...p.requiredIvs.map(i=>IV_NAMES[i]+' 31'),'Naturaleza '+p.nature,...(level1?['Nivel 1']:[])],
+    sort:'Precio (más barato primero)'});
   profiles.filter(p=>p.nature&&Array.isArray(p.requiredIvs)&&p.requiredIvs.length).forEach((p,order)=>{
     const rank=(p.featured?0:1000)+order;
-    add(cleanSpecies(p.name),p,false,rank);
+    profileMission(cleanSpecies(p.name),p,false,rank);
     const base=baseFor(p.name);
     // Breeders buy the base form at level 1 (the Gible Alegre Ata+Vel example).
-    if(base&&speciesKey(base)!==speciesKey(cleanSpecies(p.name)))add(base,p,true,rank+.5);
+    if(base&&speciesKey(base)!==speciesKey(cleanSpecies(p.name)))profileMission(base,p,true,rank+.5);
   });
+  // Ditto is valued by how many perfect IVs it has, any nature.
+  for(const [n,priority] of [[6,40],[5,41],[4,42]])add({id:'ditto|'+n,species:'Ditto',nature:null,ivs:[],
+    total31:n,level1:false,target:'Crianza',priority,
+    filters:['Coincidencias de IV: '+n,'Cualquier naturaleza'],sort:'Precio (más barato primero)'});
   return missions;
 }
 
-function matchesMission(row,m){
-  return !!row&&speciesKey(row.species)===speciesKey(m.species)&&
-    normalizedNature(row.nature)===normalizedNature(m.nature)&&
-    m.ivs.every(i=>row.ivs?.[i]===31)&&(!m.level1||row.level===1);
+// Why a visible row does or does not count for the mission.
+// → {state:'ok'|'no'|'reading', text}
+function judge(row,m){
+  if(!row)return {state:'reading',text:'Leyendo…'};
+  const missing=new Set(row.missingFields||[]);
+  if(!row.species||missing.has('ESPECIE'))return {state:'reading',text:'Leyendo especie…'};
+  if(speciesKey(row.species)!==speciesKey(m.species))return {state:'no',text:'Otra especie: '+row.species};
+  if(m.nature){
+    if(!row.nature||missing.has('NATURALEZA'))return {state:'reading',text:'Leyendo naturaleza…'};
+    if(normalizedNature(row.nature)!==normalizedNature(m.nature))return {state:'no',text:'Naturaleza '+row.nature};
+  }
+  for(const i of m.ivs){
+    const v=row.ivs?.[i];
+    if(v===null||v===undefined)return {state:'reading',text:'Leyendo '+IV_NAMES[i]+'…'};
+    if(v!==31)return {state:'no',text:'Le falta 31 en '+IV_NAMES[i]};
+  }
+  if(m.total31){
+    if((row.ivs||[]).some(v=>v===null))return {state:'reading',text:'Leyendo IVs…'};
+    if(count31(row.ivs)!==m.total31)return {state:'no',text:count31(row.ivs)+'×31, la misión es '+m.total31+'×31'};
+  }
+  if(m.level1){
+    if(!Number.isInteger(row.level))return {state:'reading',text:'Leyendo nivel…'};
+    if(row.level!==1)return {state:'no',text:'Nivel '+row.level+' (misión: nivel 1)'};
+  }
+  if(!Number.isSafeInteger(row.price)||row.price<=0||(row.priceReliable===false&&!row.ocrReliable))
+    return {state:'reading',text:'Leyendo precio…'};
+  return {state:'ok',text:'Precio guardado'};
 }
-
-function progressOf(m,samples){
-  const ids=new Set(samples.filter(r=>matchesMission(r,m)).map(r=>r.fingerprint||JSON.stringify(r)));
-  return Math.min(GOAL,ids.size);
+function matchesMission(row,m){return judge(row,m).state==='ok';}
+// One ad = species + level + nature + price + the IVs the mission needs.
+// Works for complete and partial reads, so the same ad never counts twice.
+function adKey(row,m){
+  return [speciesKey(row.species),row.level??'?',normalizedNature(row.nature),row.price,
+    ...(m.total31?[count31(row.ivs)]:m.ivs.map(i=>row.ivs?.[i]))].join('|');
+}
+function progressOf(m,samples,extra=new Set()){
+  const keys=new Set(extra);
+  for(const r of samples)if(matchesMission(r,m))keys.add(adKey(r,m));
+  return Math.min(GOAL,keys.size);
 }
 
 function createLearner({profiles,samplesFor,skipped=[]}={}){
   const missions=buildMissions(profiles);
   const skip=new Set(skipped);
   const exhausted=new Set();
-  let current=null,startedAt=0;
-  // One DB read per species per GTL read, not one per mission.
+  const seen=new Map();   // mission id → ad keys counted from partial reads
+  let current=null;
   const cache=new Map();
   const samples=species=>{
     const k=speciesKey(species);
     if(!cache.has(k))cache.set(k,samplesFor(species));
     return cache.get(k);
   };
-  const progress=m=>progressOf(m,samples(m.species));
+  const progress=m=>progressOf(m,samples(m.species),seen.get(m.id));
+  const finished=m=>progress(m)>=GOAL||exhausted.has(m.id);
   function open(){
-    return missions.filter(m=>!skip.has(m.id)&&!exhausted.has(m.id)&&progress(m)<GOAL)
-      .sort((a,b)=>a.priority-b.priority);
+    return missions.filter(m=>!skip.has(m.id)&&!finished(m)).sort((a,b)=>a.priority-b.priority);
   }
-  function pick(){
-    current=open()[0]||null;startedAt=Date.now();
-    return current;
-  }
+  function pick(){current=open()[0]||null;return current;}
   function view(){
-    if(!current)return {done:true,total:missions.length,
-      completed:missions.filter(m=>progress(m)>=GOAL||exhausted.has(m.id)).length};
-    const got=progress(current);
-    const completed=missions.filter(m=>progress(m)>=GOAL||exhausted.has(m.id)).length;
+    const completed=missions.filter(finished).length;
+    if(!current)return {done:true,total:missions.length,completed};
     return {done:false,id:current.id,species:current.species,nature:current.nature,
       filters:current.filters,sort:current.sort,target:current.target,level1:current.level1,
-      got,goal:GOAL,completed,total:missions.length,
+      got:progress(current),goal:GOAL,completed,total:missions.length,
       text:'Busca '+current.species+(current.level1?' (nivel 1)':'')+' · '+current.filters.join(' · ')};
   }
+  // Labels for the overlay: one per visible row, learning only.
+  function labels(visibleRows=[]){
+    if(!current)return [];
+    return visibleRows.map(r=>{
+      const j=judge(r,current);
+      return {rank:r.rank,species:r.species,price:r.price,learn:j.state,reasonText:j.text};
+    });
+  }
   // Called after every GTL read. Returns true when the mission advanced.
-  function observe(visibleRows=[],{fullPage=true}={}){
+  function observe(visibleRows=[],{pageInfo=null}={}){
     cache.clear();
     if(!current)return false;
-    const mine=visibleRows.filter(r=>matchesMission(r,current));
-    const allMission=visibleRows.length>0&&mine.length===visibleRows.length;
+    const set=seen.get(current.id)||new Set();
+    for(const r of visibleRows)if(matchesMission(r,current))set.add(adKey(r,current));
+    seen.set(current.id,set);
     if(progress(current)>=GOAL){pick();return true;}
-    // A filtered search that shows less than a full page has no more ads.
-    if(allMission&&!fullPage&&Date.now()-startedAt>3000){exhausted.add(current.id);pick();return true;}
+    // Last page of a search that is (mostly) this species: nothing more to see.
+    const ours=visibleRows.filter(r=>r.species&&speciesKey(r.species)===speciesKey(current.species)).length;
+    if(pageInfo?.last&&visibleRows.length&&ours>=Math.ceil(visibleRows.length/2)){
+      exhausted.add(current.id);pick();return true;
+    }
     return false;
   }
   function next(){if(current)skip.add(current.id);pick();return view();}
@@ -91,7 +133,7 @@ function createLearner({profiles,samplesFor,skipped=[]}={}){
       filters:m.filters,got:progress(m),goal:GOAL,target:m.target}));
   }
   pick();
-  return {view,observe,next,list,invalidate:()=>cache.clear(),current:()=>current,skipped:()=>[...skip]};
+  return {view,observe,labels,next,list,invalidate:()=>cache.clear(),current:()=>current,skipped:()=>[...skip]};
 }
 
-module.exports={buildMissions,createLearner,matchesMission,progressOf,GOAL};
+module.exports={buildMissions,createLearner,judge,matchesMission,progressOf,adKey,GOAL,IV_FIELDS};

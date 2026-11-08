@@ -66,3 +66,14 @@ test('budget and missing data are explained, never guessed',()=>{
   assert.equal(dealScore(500),0);
   assert.equal(dealScore(10000),5.5);
 });
+
+test('6×31 and 5×31, level 1 and level 100 are different classes',()=>{
+  const g=(price,ivs,level,f)=>({species:'Gligar',level,nature:'agitada',sex:'M',price,ivs,lastSeen:now-1000,fingerprint:f});
+  const six=[31,31,31,31,31,31],five=[31,31,31,31,31,20];
+  // Expensive 6×31 must not inflate the resale of a 5×31.
+  const peers=[654222,666666,790000,800000].map((p,i)=>g(p,six,1,'s'+i));
+  const r=assess(g(525000,five,1,'x'),peers,{...opts,balance:5_000_000});
+  assert.equal(r.reason,'MUESTRA_INSUFICIENTE');
+  const lv=assess(g(30000,five,1,'y'),[60000,61000,62000].map((p,i)=>g(p,five,100,'l'+i)),{...opts,balance:5_000_000});
+  assert.equal(lv.reason,'MUESTRA_INSUFICIENTE');
+});

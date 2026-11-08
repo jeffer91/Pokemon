@@ -30,7 +30,8 @@ function draw(b,text,cx,cy,green=false){
   }
 }
 const ivCenters=[.40,.44,.48,.52,.56,.60],rowCenters=Array.from({length:10},(_,i)=>.05+.045*i);
-const cells={panel:{x:0,y:0,width:W},crop:{x:0,y:0,width:W,height:H},ivCenters,ivHalf:.018,rowCenters,rowHalf:.0115};
+const cells={panel:{x:0,y:0,width:W},crop:{x:0,y:0,width:W,height:H},ivCenters,ivHalf:.018,rowCenters,rowHalf:.0115,
+  cols:{name:[.078,.292],nature:[.292,.356],price:[.557,.675]}};
 const at=(rank,j)=>[ivCenters[j]*W,rowCenters[rank-1]*W];
 function row(rank,ivs,extra={}){
   return {species:'Gible',level:1,nature:'alegre',sex:'F',price:5000,ivs,rank,
@@ -85,4 +86,41 @@ test('natures tolerate one OCR mistake but never guess between two',()=>{
   assert.equal(fuzzyNature('alegra'),'alegre');
   assert.equal(fuzzyNature('timlda'),'timida');
   assert.equal(fuzzyNature('xx'),null);
+});
+
+test('names survive split dots, junk borders and dropped levels',()=>{
+  const {parseNameCell}=require('../src/recognition');
+  assert.deepEqual(parseNameCell('Nv. 100 Garchomp'),{level:100,species:'Garchomp'});
+  assert.deepEqual(parseNameCell('Nv .51 Garchomp'),{level:51,species:'Garchomp'});
+  assert.deepEqual(parseNameCell('Nv . 100 Garchomp'),{level:100,species:'Garchomp'});
+  assert.deepEqual(parseNameCell('| Nv. 1 Gligar É'),{level:1,species:'Gligar'});
+  assert.deepEqual(parseNameCell('— Nv.40Gligar E'),{level:40,species:'Gligar'});
+  assert.deepEqual(parseNameCell('Nv Garchomp'),{level:null,species:'Garchomp'});
+});
+
+test('a nature cut on the left is recovered only when unique',()=>{
+  assert.equal(fuzzyNature('egre'),'alegre');
+  assert.equal(fuzzyNature('legre'),'alegre');
+  assert.equal(fuzzyNature('El'),null);
+});
+
+test('text cells of partial rows are re-read and applied',()=>{
+  const {pendingTextCells,applyTextReads}=require('../src/cell-reader');
+  const parsed={rows:[],partialRows:[{species:'Garchomp',level:null,nature:'el',sex:'F',price:235111,
+    ivs:[31,31,26,27,7,31],rank:9,priceReliable:true,missingFields:['NIVEL','NATURALEZA']}],cells,visibleRows:10};
+  const cellsToRead=pendingTextCells(parsed,{width:W,height:H});
+  assert.deepEqual(cellsToRead.map(c=>c.field),['name','nature']);
+  const out=applyTextReads(parsed,[{rank:9,field:'name',value:{species:'Garchomp',level:68}},
+    {rank:9,field:'nature',value:'alegre'}]);
+  assert.equal(out.rows.length,1);
+  assert.equal(out.rows[0].level,68);
+  assert.equal(out.diagnosticRows[8].state,'complete');
+});
+
+test('the footer marks empty rows and the last page',()=>{
+  const {diagnosticRowsFor}=require('../src/cell-reader');
+  const rows=diagnosticRowsFor([{rank:1,species:'Gligar',ivs:[31,31,31,31,31,31],ocrReliable:true}],[],2);
+  assert.equal(rows[0].state,'complete');
+  assert.equal(rows[1].state,'missing');
+  assert.equal(rows[2].state,'empty');
 });

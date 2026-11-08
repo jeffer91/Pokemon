@@ -27,7 +27,7 @@ function summarizeActivity(rows,now=Date.now()){
     const key=groupKey(row);
     if(!byMarket.has(key))byMarket.set(key,{key,species,nature:row.nature,sex:row.sex,
       level1:row.level===1,iv31:signature(row),samples:[],seen:0});
-    const g=byMarket.get(key);g.seen++;
+    const g=byMarket.get(key);g.seen++;(g.allPrices||(g.allPrices=[])).push(row.price);
     if(row.verified===1)g.samples.push(row);
   }
   const active=[...bySpecies.values()].map(s=>({...s,
@@ -37,24 +37,40 @@ function summarizeActivity(rows,now=Date.now()){
   const comparable=[...byMarket.values()].map(g=>{
     const prices=g.samples.map(r=>r.price);
     return {species:g.species,nature:g.nature,sex:g.sex,level1:g.level1,
-      iv31:g.iv31,count:g.seen,verified:prices.length,
+      iv31:g.iv31,count:g.seen,verified:prices.length,allPrices:g.allPrices||[],
       min:prices.length?Math.min(...prices):null,
       median:median(prices),lastSeen:g.samples.length?
         Math.max(...g.samples.map(r=>r.lastSeen)):null};
   }).sort((a,b)=>b.verified-a.verified||b.count-a.count);
   return {active,comparable,total:rows.length};
 }
-function suggestedSearches(rows,now=Date.now()){
+function suggestedSearches(rows,now=Date.now(),{spendable=null}={}){
   const market=summarizeActivity(rows,now);
   const suggestions=[],seen=new Set();
+  const affordable=price=>spendable===null||!Number.isFinite(spendable)||price<=spendable;
   const push=s=>{
     if(!s||seen.has(s.key))return;
     seen.add(s.key);suggestions.push(s);
   };
   // Group by identical nature, level-band, gender and IV31 positions only.
   // This gives reasonably comparable prices; it never implies sales occurred.
+  // Hunting within budget: searches whose cheap end you can actually buy and
+  // whose prices are spread out (cheap ads well below the usual price).
   for(const g of market.comparable){
-    if(g.verified<5||!g.iv31.length)continue;
+    if(g.count<3||!g.iv31.length||spendable===null)continue;
+    const prices=[...g.allPrices].sort((a,b)=>a-b);
+    const low=prices[0],mid=prices[Math.floor(prices.length/2)];
+    if(!affordable(low)||mid-low<2000)continue;
+    const iv=g.iv31.map(i=>IV_NAMES[i]+' 31').join(' · ');
+    push({key:'budget-'+[g.species,g.nature,g.iv31.join(','),g.level1].join('_'),kind:'budget',
+      score:60+Math.min(30,(mid-low)/1000),title:'Cazar: '+g.species+' · '+g.nature+(g.level1?' · Nv. 1':''),
+      detail:iv+' · '+g.count+' anuncios vistos · desde '+low.toLocaleString('es-EC')+' ¥, lo normal '+
+        mid.toLocaleString('es-EC')+' ¥ · cabe en tu presupuesto',
+      label:'Dentro de presupuesto',filters:{species:g.species,nature:g.nature,iv:g.iv31,level:g.level1?1:null},
+      samples:g.count,confidence:g.count>=8?'media':'baja',observedAt:g.lastSeen});
+  }
+  for(const g of market.comparable){
+    if(g.verified<5||!g.iv31.length||!affordable(g.min))continue;
     const spread=g.median?1-g.min/g.median:0;
     const emphasis=spread>=.12?'Investigar precios bajos':'Mercado con referencias';
     const iv=g.iv31.map(i=>IV_NAMES[i]+' 31').join(' · ');
@@ -100,11 +116,12 @@ function suggestedSearches(rows,now=Date.now()){
       observedAt:s.newest});
   }
   const byKind={
+    budget:suggestions.filter(x=>x.kind==='budget').sort((a,b)=>b.score-a.score).slice(0,3),
     market:suggestions.filter(x=>x.kind==='market').sort((a,b)=>b.score-a.score).slice(0,2),
     catalog:suggestions.filter(x=>x.kind==='catalog').sort((a,b)=>b.score-a.score).slice(0,3),
     activity:suggestions.filter(x=>x.kind==='activity').sort((a,b)=>b.score-a.score).slice(0,2)
   };
-  const chosen=[...byKind.market,...byKind.catalog,...byKind.activity].slice(0,7);
+  const chosen=[...byKind.budget,...byKind.market,...byKind.catalog,...byKind.activity].slice(0,8);
   if(!chosen.length)chosen.push({
     key:'init',kind:'bootstrap',score:0,title:'GTL → Más nuevo, sin filtros',
     detail:'Recorre distintas páginas para construir referencias reales.',
