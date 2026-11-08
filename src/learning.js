@@ -27,8 +27,9 @@ function buildMissions(profiles=[]){
     const rank=(p.featured?0:1000)+order;
     profileMission(cleanSpecies(p.name),p,false,rank);
     const base=baseFor(p.name);
-    // Breeders buy the base form at level 1 (the Gible Alegre Ata+Vel example).
-    if(base&&speciesKey(base)!==speciesKey(cleanSpecies(p.name)))profileMission(base,p,true,rank+.5);
+    // The base form (Gible for Garchomp) is cheaper and evolves; any level —
+    // on the GTL the level barely moves the price.
+    if(base&&speciesKey(base)!==speciesKey(cleanSpecies(p.name)))profileMission(base,p,false,rank+.5);
   });
   // Ditto is valued by how many perfect IVs it has, any nature.
   for(const [n,priority] of [[6,40],[5,41],[4,42]])add({id:'ditto|'+n,species:'Ditto',nature:null,ivs:[],
@@ -82,11 +83,6 @@ function checkFilters(values,m){
     if(!has(k))items.push({ok:null,text:IV_NAMES[i]+' sin leer'});
     else if(values[k]===31)items.push({ok:true,text:IV_NAMES[i]+' 31'});
     else items.push({ok:false,text:'IV '+IV_NAMES[i]+' Min debe ser 31'});
-  }
-  if(m.level1){
-    if(!has('levelMax'))items.push({ok:null,text:'Nivel Max sin leer'});
-    else if(values.levelMax===1)items.push({ok:true,text:'Nivel 1'});
-    else items.push({ok:false,text:'Nivel Max debe ser 1'});
   }
   if(m.total31){
     if(!has('matches'))items.push({ok:null,text:'Coincidencias sin leer'});

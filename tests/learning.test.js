@@ -12,11 +12,12 @@ const learnerAt=(store,species)=>{
   return learner;
 };
 
-test('missions follow the ideal: Garchomp and its level-1 Gible base come first, plus Ditto',()=>{
+test('missions follow the ideal: Garchomp and its Gible base (any level) come first, plus Ditto',()=>{
   const missions=buildMissions(PRIORITY_PROFILES);
   assert.equal(missions[0].species,'Garchomp');
   assert.equal(missions[1].species,'Gible');
-  assert.deepEqual(missions[1].filters,['Ataque 31','Velocidad 31','Naturaleza Alegre','Nivel 1']);
+  assert.deepEqual(missions[1].filters,['Ataque 31','Velocidad 31','Naturaleza Alegre']);
+  assert.ok(missions.every(m=>!m.level1),'level never restricts a mission');
   assert.ok(missions.some(m=>m.species==='Gyarados'));
   assert.ok(missions.some(m=>m.id==='ditto|6'));
   assert.ok(!missions.some(m=>m.species==='Rotom'&&m.level1),'no level-1 copy of the same species');
@@ -28,7 +29,7 @@ test('every row gets a learning label, never a buy or budget label',()=>{
   assert.equal(judge(gible(1),m).state,'ok');
   assert.match(judge(gible(1,{nature:'Firme'}),m).text,/Naturaleza Firme/);
   assert.match(judge(gible(1,{ivs:[10,31,12,8,14,20]}),m).text,/Velocidad/);
-  assert.match(judge(gible(1,{level:30}),m).text,/Nivel 30/);
+  assert.equal(judge(gible(1,{level:30}),m).state,'ok','any level counts');
   assert.equal(judge(gible(1,{species:'Zubat'}),m).state,'no');
   // A partial read that already has what the mission needs counts.
   const partial=gible(2,{ivs:[null,31,null,8,14,31],ocrReliable:false,priceReliable:true,missingFields:['IV_PS','IV_DEFENSA']});

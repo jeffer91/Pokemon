@@ -46,7 +46,7 @@ function profileFit(row,profiles=[]){
 // page against hundreds of stored samples stays far below one millisecond.
 const keyCache=new Map();
 function classKeys(row,profiles){
-  const id=row.species+'|'+row.nature+'|'+(row.ivs||[]).join(',')+'|'+(row.level===1?1:0)+'|'+profiles.length;
+  const id=row.species+'|'+row.nature+'|'+(row.ivs||[]).join(',')+'|'+profiles.length;
   const hit=keyCache.get(id);
   if(hit)return hit;
   const out=computeKeys(row,profiles);
@@ -56,14 +56,15 @@ function classKeys(row,profiles){
 }
 function computeKeys(row,profiles){
   const fit=profileFit(row,profiles);
-  // Exact number of 31s (a 6×31 is never priced like a 5×31) and level band:
-  // breeders pay for level 1, battlers for trained ones.
-  const sp=speciesKey(row.species),t=fit.total31,lv=row.level===1?'L1':'Lx';
+  // Exact number of 31s (a 6×31 is never priced like a 5×31). Level is NOT
+  // part of the class: on the GTL it barely moves the price (Garchomp Nv. 51
+  // and Nv. 100 at the same 190.000).
+  const sp=speciesKey(row.species),t=fit.total31;
   // Ditto is priced by how many perfect IVs it has, whatever its nature.
   if(sp==='ditto')return {fit,exact:[sp,t].join('|'),loose:[sp,t].join('|')};
-  if(fit.best)return {fit,exact:[sp,fit.best.natureOk?'N':'n',fit.best.reqHits,t,lv].join('|'),
-    loose:[sp,fit.best.reqHits,t,lv].join('|')};
-  return {fit,exact:[sp,normalizedNature(row.nature),t,lv].join('|'),loose:[sp,t,lv].join('|')};
+  if(fit.best)return {fit,exact:[sp,fit.best.natureOk?'N':'n',fit.best.reqHits,t].join('|'),
+    loose:[sp,fit.best.reqHits,t].join('|')};
+  return {fit,exact:[sp,normalizedNature(row.nature),t].join('|'),loose:[sp,t].join('|')};
 }
 function dealScore(net){
   if(!Number.isFinite(net)||net<1000)return 0;
@@ -74,67 +75,127 @@ function dealScore(net){
 function tier(net){return net>=10000?'excelente':net>=5000?'muy buena':net>=1000?'buena':'baja';}
 const money=n=>Math.round(n).toLocaleString('es-ES');
 
-function assess(listing,samples=[],{profiles=[],balance=null,fee=null,pendingSpend=0,now=Date.now(),sales=[]}={}){
-  const listingFee=Number.isSafeInteger(fee)&&fee>=0?fee:DEFAULT_FEE;
-  const silent=(reason,reasonText,extra={})=>({decision:'SILENCIO',reason,reasonText,score:null,
-    scoreKind:'GANGA',confidence:0,feeEstimate:listingFee,...extra});
-  if(!listing||!validPrice(listing.price))return silent('PRECIO_NO_LEIDO','Precio sin leer');
-  const spendable=availableToSpend(balance,pendingSpend);
-  if(!validListing(listing)){
-    if(spendable!==null&&listing.price>spendable)
-      return {decision:'NO_COMPRAR',reason:'RESERVA_30_POR_CIENTO',reasonText:'Fuera de tu presupuesto',
-        score:null,scoreKind:'GANGA',confidence:1,spendable,feeEstimate:listingFee};
-    return silent('LECTURA_INCOMPLETA','Lectura incompleta');
+// How much the price grows with each extra 31, learned from every stored ad:
+// price relative to its species median, grouped by number of 31s. Falls back
+// to conservative defaults until a bucket has enough data; never decreasing.
+const DEFAULT_MULTIPLIERS=[1,1.15,1.6,2.6,4.5,8,15];
+function learnMultipliers(rows=[]){
+  const bySpecies=new Map();
+  for(const r of rows){
+    if(!Number.isSafeInteger(r.price)||r.price<=0||!Array.isArray(r.ivs))continue;
+    const k=speciesKey(r.species);
+    if(!bySpecies.has(k))bySpecies.set(k,[]);
+    bySpecies.get(k).push(r);
   }
-  const {fit,exact,loose}=classKeys(listing,profiles);
-  const quality=fit.quality;
-  const cutoff=now-7*86_400_000;
+  const ratios=Array.from({length:7},()=>[]);
+  for(const list of bySpecies.values()){
+    if(list.length<3)continue;
+    const med=percentile(list.map(r=>r.price),.5);
+    for(const r of list)ratios[Math.min(6,count31(r.ivs))].push(r.price/med);
+  }
+  const base=ratios[0].length>=10?percentile(ratios[0],.5):null;
+  const m=DEFAULT_MULTIPLIERS.map((d,t)=>{
+    if(!base||ratios[t].length<10)return d;
+    return Math.max(.5,percentile(ratios[t].map(x=>x*1000),.5)/1000/base);
+  });
+  for(let t=1;t<7;t++)m[t]=Math.max(m[t],m[t-1]);
+  return m;
+}
+// Estimate tiers, from the most exact evidence to the most general. The less
+// exact the estimate, the bigger the margin required before saying COMPRAR.
+const TIERS={
+  exact:{label:'clase exacta',confidence:1,minNet:1000,minDiscount:0},
+  loose:{label:'misma especie y 31',confidence:.8,minNet:2000,minDiscount:.2},
+  species:{label:'estimado por especie',confidence:.6,minNet:5000,minDiscount:.4},
+  line:{label:'estimado por su evolución',confidence:.45,minNet:5000,minDiscount:.4}
+};
+const LINE_FACTOR=.45; // a base form usually sells well below its final form
+function scaled(list,t,m,factor=1){
+  return list.map(s=>Math.round(s.price*m[Math.min(6,t)]/m[Math.min(6,count31(s.ivs))]*factor));
+}
+function cleanPool(samples,listing,cutoff){
   const unique=new Map();
-  for(const s of samples){
+  for(const s of samples||[]){
     if(!validListing(s)||!(s.lastSeen>=cutoff))continue;
     const id=s.fingerprint||[s.species,s.level,s.nature,s.sex,s.price,...s.ivs].join('|');
     if(listing.fingerprint&&id===listing.fingerprint)continue;
     if(!unique.has(id))unique.set(id,s);
   }
-  const pool=[...unique.values()].map(s=>({s,k:classKeys(s,profiles)}));
-  let peers=pool.filter(x=>x.k.exact===exact).map(x=>x.s),factor=1,scope='clase exacta';
-  if(peers.length<MIN_SAMPLES){
-    peers=pool.filter(x=>x.k.loose===loose).map(x=>x.s);factor=.8;scope='clase amplia';
-  }
-  const target=fit.best?.profile||null;
-  const base={scoreKind:'GANGA',quality,ideal:fit.ideal,target,total31:fit.total31,
-    feeEstimate:listingFee,spendable,comparables:peers.length};
-  if(peers.length<MIN_SAMPLES){
-    const out={...base,decision:'SILENCIO',reason:'MUESTRA_INSUFICIENTE',score:quality,
-      reasonText:'Faltan precios ('+peers.length+'/'+MIN_SAMPLES+')'+(fit.ideal?' · ideal '+target:''),confidence:0};
-    if(spendable!==null&&listing.price>spendable)
-      return {...out,decision:'NO_COMPRAR',reason:'RESERVA_30_POR_CIENTO',reasonText:'Fuera de tu presupuesto'};
-    return out;
-  }
-  // Listing at the cheap end of the class is what sells; use the 25th percentile.
-  // Your own confirmed sales of the same class beat asking prices.
-  const sold=(sales||[]).filter(x=>Number.isSafeInteger(x.price)&&x.ivs&&classKeys(x,profiles).exact===exact).map(x=>x.price);
-  const asking=percentile(peers.map(p=>p.price),.25);
-  const resale=sold.length>=2?percentile(sold,.5):sold.length===1?Math.round((sold[0]+asking)/2):asking;
-  if(sold.length)scope='ventas reales ('+sold.length+')';
-  const net=resale-listing.price-listingFee;
-  const confidence=sold.length>=2?1:round1(factor*Math.min(1,.6+.08*peers.length));
-  const deal=dealScore(net)*confidence;
-  const score=round1(Math.min(10,quality+deal));
-  const result={...base,score,resale,priceReference:resale,netEstimate:net,confidence,scope,
-    discount:+((resale-listing.price)/resale).toFixed(3),dealTier:tier(net)};
-  const label=(fit.ideal?'Ideal '+target+' · ':'')+'Gana ~'+money(net);
-  if(spendable===null)
-    return {...result,decision:score>=BUY_SCORE&&net>=1000?'SILENCIO':'NO_COMPRAR',
-      reason:score>=BUY_SCORE&&net>=1000?'SALDO_NO_CONFIRMADO':'PUNTAJE_BAJO',
-      reasonText:score>=BUY_SCORE&&net>=1000?label+' · saldo por confirmar':
-        net<1000?'Margen '+money(net):'Puntaje bajo · '+money(net)};
-  if(listing.price>spendable)
-    return {...result,decision:'NO_COMPRAR',reason:'RESERVA_30_POR_CIENTO',reasonText:'Fuera de tu presupuesto'};
-  if(score>=BUY_SCORE&&net>=1000)
-    return {...result,decision:'COMPRAR',reason:'GANGA_'+tier(net).toUpperCase().replace(' ','_'),
-      reasonText:label};
-  return {...result,decision:'NO_COMPRAR',reason:net<1000?'MARGEN_INSUFICIENTE':'PUNTAJE_BAJO',
-    reasonText:net<1000?'Margen '+money(net):'Gana ~'+money(net)+', se vendería lento'};
+  return [...unique.values()];
 }
-module.exports={assess,profileFit,classKeys,dealScore,percentile,DEFAULT_FEE,BUY_SCORE,MIN_SAMPLES};
+
+function assess(listing,samples=[],{profiles=[],balance=null,fee=null,pendingSpend=0,now=Date.now(),sales=[],
+  lineSamples=[],multipliers=DEFAULT_MULTIPLIERS}={}){
+  const listingFee=Number.isSafeInteger(fee)&&fee>=0?fee:DEFAULT_FEE;
+  const silent=(reason,reasonText,extra={})=>({decision:'SILENCIO',reason,reasonText,score:null,
+    scoreKind:'GANGA',confidence:0,feeEstimate:listingFee,...extra});
+  if(!listing||!validPrice(listing.price))return silent('PRECIO_NO_LEIDO','Precio sin leer');
+  const spendable=availableToSpend(balance,pendingSpend);
+  const overBudget=spendable!==null&&listing.price>spendable;
+  if(!validListing(listing)){
+    if(overBudget)
+      return {decision:'NO_COMPRAR',reason:'RESERVA_30_POR_CIENTO',reasonText:'Fuera de tu presupuesto',
+        score:null,scoreKind:'GANGA',confidence:1,spendable,feeEstimate:listingFee};
+    return silent('LECTURA_INCOMPLETA','Lectura incompleta');
+  }
+  const {fit,exact,loose}=classKeys(listing,profiles);
+  const quality=fit.quality,t=fit.total31,target=fit.best?.profile||null;
+  const cutoff=now-7*86_400_000;
+  const pool=cleanPool(samples,listing,cutoff).map(s=>({s,k:classKeys(s,profiles)}));
+  const exactPeers=pool.filter(x=>x.k.exact===exact).map(x=>x.s);
+  const base={scoreKind:'GANGA',quality,ideal:fit.ideal,target,total31:t,feeEstimate:listingFee,spendable};
+  // Junk (≤1 useful 31, far from any ideal) has no resale value: no data needed,
+  // unless its exact class already proves otherwise.
+  if(quality<1.5&&exactPeers.length<MIN_SAMPLES)
+    return {...base,decision:'NO_COMPRAR',reason:'SIN_VALOR',reasonText:'Sin valor de reventa',
+      score:quality,confidence:1,comparables:exactPeers.length};
+  // Pick the most exact tier that has enough evidence.
+  let tierKey=null,estimates=null;
+  const sold=(sales||[]).filter(x=>Number.isSafeInteger(x.price)&&x.ivs&&classKeys(x,profiles).exact===exact).map(x=>x.price);
+  if(exactPeers.length>=MIN_SAMPLES){tierKey='exact';estimates=exactPeers.map(s=>s.price);}
+  else{
+    const loosePeers=pool.filter(x=>x.k.loose===loose).map(x=>x.s);
+    if(loosePeers.length>=MIN_SAMPLES){tierKey='loose';estimates=loosePeers.map(s=>s.price);}
+    else if(pool.length>=MIN_SAMPLES){tierKey='species';estimates=scaled(pool.map(x=>x.s),t,multipliers);}
+    else{
+      const finals=cleanPool(lineSamples,listing,cutoff);
+      if(finals.length>=MIN_SAMPLES){tierKey='line';estimates=scaled(finals,t,multipliers,LINE_FACTOR);}
+    }
+  }
+  if(!tierKey&&sold.length){tierKey='exact';estimates=sold;}
+  if(!tierKey){
+    const have=Math.max(pool.length,0);
+    const out={...base,decision:'SILENCIO',reason:'MUESTRA_INSUFICIENTE',score:quality,comparables:have,
+      reasonText:'Faltan precios de '+listing.species+' ('+have+'/'+MIN_SAMPLES+')'+(fit.ideal?' · ideal '+target:''),confidence:0};
+    return overBudget?{...out,decision:'NO_COMPRAR',reason:'RESERVA_30_POR_CIENTO',reasonText:'Fuera de tu presupuesto'}:out;
+  }
+  const T=TIERS[tierKey];
+  // The cheap end of comparable ads is what sells: 25th percentile.
+  const asking=percentile(estimates,.25);
+  const resale=sold.length>=2?percentile(sold,.5):sold.length===1?Math.round((sold[0]+asking)/2):asking;
+  const scope=sold.length?'ventas reales ('+sold.length+')':T.label;
+  const net=resale-listing.price-listingFee;
+  const confidence=sold.length>=2?1:round1(T.confidence*Math.min(1,.6+.08*estimates.length));
+  const discount=resale>0?(resale-listing.price)/resale:0;
+  // Rough tiers already demand a bigger margin and discount; confidence only
+  // trims the score a little so they are not punished twice.
+  const deal=dealScore(net)*(.8+.2*confidence);
+  const score=round1(Math.min(10,quality+deal));
+  const minNet=sold.length>=2?1000:T.minNet,minDiscount=sold.length>=2?0:T.minDiscount;
+  const result={...base,score,resale,priceReference:resale,netEstimate:net,confidence,scope,tier:tierKey,
+    comparables:estimates.length,discount:+discount.toFixed(3),dealTier:tier(net)};
+  const label=(fit.ideal?'Ideal '+target+' · ':'')+'Gana ~'+money(net)+(tierKey==='exact'&&!sold.length?'':' · '+scope);
+  const good=score>=BUY_SCORE&&net>=minNet&&discount>=minDiscount;
+  if(spendable===null)
+    return {...result,decision:good?'SILENCIO':'NO_COMPRAR',reason:good?'SALDO_NO_CONFIRMADO':'PUNTAJE_BAJO',
+      reasonText:good?label+' · saldo por confirmar':net<minNet?'Margen '+money(net):'Puntaje bajo · '+money(net)};
+  if(overBudget)
+    return {...result,decision:'NO_COMPRAR',reason:'RESERVA_30_POR_CIENTO',reasonText:'Fuera de tu presupuesto'};
+  if(good)
+    return {...result,decision:'COMPRAR',reason:'GANGA_'+tier(net).toUpperCase().replace(' ','_'),reasonText:label};
+  const why=net<minNet?'Margen '+money(net)+(minNet>1000?' (pide '+money(minNet)+', '+scope+')':''):
+    discount<minDiscount?'Solo '+Math.round(discount*100)+'% bajo lo normal ('+scope+')':
+    'Gana ~'+money(net)+', se vendería lento';
+  return {...result,decision:'NO_COMPRAR',reason:net<minNet?'MARGEN_INSUFICIENTE':'PUNTAJE_BAJO',reasonText:why};
+}
+module.exports={learnMultipliers,DEFAULT_MULTIPLIERS,TIERS,assess,profileFit,classKeys,dealScore,percentile,DEFAULT_FEE,BUY_SCORE,MIN_SAMPLES};

@@ -1,4 +1,4 @@
-# PokéRadar GTL — v0.12.0
+# PokéRadar GTL — v0.13.0
 
 Aplicación de escritorio Electron para Windows 11. **Play** inicia una sesión de lectura visual del GTL, sin formularios de cuota ni posiciones X/Y, y muestra un pequeño radar flotante. No realiza compras ni controla el cliente del juego.
 
@@ -284,3 +284,24 @@ Nota: la alineación de las etiquetas flotantes depende de la geometría detecta
 2. **En venta:** al abrir Tus Anuncios, el anuncio de esa especie y nivel se enlaza con la compra.
 3. **Vendido:** ganancia real = venta − compra − 1.000, y días en venta. **Expirado:** −1.000.
 4. Tus **ventas reales** reemplazan a los precios pedidos en la estimación de reventa del cerebro (2 o más ventas de la misma clase = mediana de ventas).
+
+## v0.13.0 — El cerebro ya puede decir COMPRAR
+
+**Problema.** El cerebro exigía 3 anuncios de la *misma clase exacta* (especie + naturaleza + 31 + nivel). Con 360.000 anuncios y 25 naturalezas, casi ninguna clase juntaba datos: todo salía «Faltan precios (0/3)» y nunca COMPRAR.
+
+**Estimación por escalones** (se usa el más exacto que tenga datos):
+
+| Escalón | Compara con | Exige para COMPRAR |
+|---|---|---|
+| Clase exacta | misma especie, naturaleza y 31 | ganancia ≥ 1.000 |
+| Misma especie y 31 | cualquier naturaleza | ganancia ≥ 2.000 y 20 % bajo lo normal |
+| Estimado por especie | cualquier anuncio de la especie, ajustado por cantidad de 31 | ganancia ≥ 5.000 y 40 % bajo lo normal |
+| Estimado por su evolución | la forma final (Litwick → Chandelure) × 0,45 | ganancia ≥ 5.000 y 40 % bajo lo normal |
+
+- El aumento de precio por cada 31 extra se **aprende de toda tu base** cada minuto (precio frente a la mediana de su especie), siempre creciente y con valores prudentes mientras faltan datos.
+- La etiqueta dice de dónde sale el precio, por ejemplo «Gana ~8.000 · estimado por su evolución».
+- Tus ventas reales siguen teniendo prioridad sobre todo lo demás.
+
+**La basura se descarta al instante.** Pokémon con un 31 útil o ninguno y lejos de cualquier ideal salen «NO COMPRAR · Sin valor de reventa», sin esperar precios.
+
+**El nivel ya no cuenta.** Ni en las clases del cerebro ni en las misiones (las formas base se buscan de cualquier nivel), ni en la verificación de filtros. En el GTL el nivel casi no mueve el precio: Garchomp Nv. 51 y Nv. 100 a 190.000.

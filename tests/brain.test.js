@@ -67,13 +67,48 @@ test('budget and missing data are explained, never guessed',()=>{
   assert.equal(dealScore(10000),5.5);
 });
 
-test('6×31 and 5×31, level 1 and level 100 are different classes',()=>{
+test('6×31 prices never inflate a 5×31, and level does not split classes',()=>{
   const g=(price,ivs,level,f)=>({species:'Gligar',level,nature:'agitada',sex:'M',price,ivs,lastSeen:now-1000,fingerprint:f});
   const six=[31,31,31,31,31,31],five=[31,31,31,31,31,20];
-  // Expensive 6×31 must not inflate the resale of a 5×31.
   const peers=[654222,666666,790000,800000].map((p,i)=>g(p,six,1,'s'+i));
   const r=assess(g(525000,five,1,'x'),peers,{...opts,balance:5_000_000});
-  assert.equal(r.reason,'MUESTRA_INSUFICIENTE');
+  assert.equal(r.tier,'species');
+  assert.ok(r.resale<525000,'the 6×31 prices are scaled down for a 5×31');
+  assert.notEqual(r.decision,'COMPRAR');
   const lv=assess(g(30000,five,1,'y'),[60000,61000,62000].map((p,i)=>g(p,five,100,'l'+i)),{...opts,balance:5_000_000});
-  assert.equal(lv.reason,'MUESTRA_INSUFICIENTE');
+  assert.equal(lv.tier,'exact','level 100 ads are comparables for a level 1');
+});
+
+test('junk is rejected at once, without waiting for prices',()=>{
+  const r=assess({species:'Duskull',level:40,nature:'placida',sex:'M',price:1300,ivs:[30,10,2,27,13,11]},[],opts);
+  assert.equal(r.decision,'NO_COMPRAR');
+  assert.equal(r.reason,'SIN_VALOR');
+  assert.equal(r.reasonText,'Sin valor de reventa');
+});
+
+test('a species estimate needs a bigger margin and discount than an exact class',()=>{
+  const {learnMultipliers}=require('../src/brain');
+  const z=(price,ivs,f,nature='timida')=>({species:'Zorua',level:20,nature,sex:'M',price,ivs,lastSeen:now-1000,fingerprint:f});
+  // Only 1×31 Zorua seen: a 3×31 is estimated from them, scaled by 31 count.
+  const peers=[8000,9000,10000].map((p,i)=>z(p,[31,1,2,3,4,5],'p'+i));
+  const m=[1,1.15,1.6,2.6,4.5,8,15];
+  const cheap=assess(z(4000,[31,31,31,4,5,6],'c'),peers,{...opts,multipliers:m});
+  assert.equal(cheap.tier,'species');
+  assert.equal(cheap.decision,'COMPRAR');
+  assert.match(cheap.reasonText,/estimado por especie/);
+  const thin=assess(z(16000,[31,31,31,4,5,6],'d'),peers,{...opts,multipliers:m});
+  assert.notEqual(thin.decision,'COMPRAR','a few thousand under a rough estimate is not enough');
+  // Multipliers never decrease and fall back to defaults with little data.
+  const learned=learnMultipliers(peers);
+  for(let t=1;t<7;t++)assert.ok(learned[t]>=learned[t-1]);
+});
+
+test('a base form is priced from its evolution when it has no data of its own',()=>{
+  const lit={species:'Litwick',level:1,nature:'modesta',sex:'M',price:2500,ivs:[31,1,2,31,4,31],fingerprint:'l'};
+  const chand=[26000,28000,30000,32000].map((p,i)=>({species:'Chandelure',level:50,nature:'modesta',sex:'M',price:p,
+    ivs:[31,1,2,31,4,31],lastSeen:now-1000,fingerprint:'c'+i}));
+  const r=assess(lit,[],{...opts,lineSamples:chand});
+  assert.equal(r.tier,'line');
+  assert.ok(r.resale>=10000&&r.resale<=14000,'≈45 % of Chandelure');
+  assert.equal(r.decision,'COMPRAR');
 });

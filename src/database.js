@@ -309,6 +309,11 @@ function openDatabase(folder) {
   // class-based resale estimate. Each fingerprint is one distinct ad.
   const samplesQuery=db.prepare(`SELECT fingerprint,species,level,nature,sex,price,ivs_json,last_seen,verified
     FROM listings WHERE species=? COLLATE NOCASE AND last_seen>=? ORDER BY last_seen DESC LIMIT 600`);
+  // Every recent ad (species, IVs, price) to learn how price grows per 31.
+  const recentPricesQuery=db.prepare(`SELECT species,ivs_json,price FROM listings WHERE last_seen>=? ORDER BY last_seen DESC LIMIT 8000`);
+  function recentPrices(now=Date.now()){
+    return recentPricesQuery.all(now-7*86_400_000).map(r=>({species:r.species,price:r.price,ivs:JSON.parse(r.ivs_json)}));
+  }
   function marketSamples(species,now=Date.now()){
     return samplesQuery.all(String(species||''),now-7*86_400_000)
       .map(r=>({...r,ivs:JSON.parse(r.ivs_json),lastSeen:r.last_seen}));
@@ -476,7 +481,7 @@ function openDatabase(folder) {
   async function saveBackup(){const dest=path.join(folder,'backups');fs.mkdirSync(dest,{recursive:true});
     const file=path.join(dest,`pokeradar-${new Date().toISOString().slice(0,10)}.sqlite`);
     if(!fs.existsSync(file)) await backup(db,file);return file;}
-  return {db,filename,recordPurchase,linkOwnListings,trades,salesFor,recordOwnListings,ownListings,settings:getSettings,applySettings,recordListings,recordMarketScan,candidates,marketSamples,targetPrices,marketIntelligence,catalogProfiles,recordRecommendation,
+  return {db,filename,recordPurchase,linkOwnListings,trades,salesFor,recordOwnListings,ownListings,settings:getSettings,applySettings,recordListings,recordMarketScan,candidates,marketSamples,recentPrices,targetPrices,marketIntelligence,catalogProfiles,recordRecommendation,
     recordBalance,latestBalance,recent,history,stats,summary,addTransaction,transactionHistory,saveBackup,
     competitiveProfiles,projects,createProject,updateProject,close:()=>db.close()};
 }

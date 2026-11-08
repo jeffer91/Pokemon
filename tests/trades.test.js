@@ -62,13 +62,15 @@ test('advanced-search labels map to fields even with OCR noise',()=>{
 test('the filters you set are checked against the mission',()=>{
   const missions=buildMissions(PRIORITY_PROFILES);
   const scizor=missions.find(m=>m.species==='Scizor');
-  const scyther=missions.find(m=>m.species==='Scyther'&&m.level1);
+  const scyther=missions.find(m=>m.species==='Scyther');
   // Values read from the player's screenshot: firme, PS 31, Ataque 31, Nivel 1–100.
   const form={nature:'firme',levelMin:1,levelMax:100,ivMin0:31,ivMin1:31};
   assert.equal(checkFilters(form,scizor).ok,true);
-  const bad=checkFilters(form,scyther);
+  // Level is never checked: Nivel Max 100 is fine for the Scyther base mission.
+  assert.equal(checkFilters(form,scyther).ok,true);
+  const bad=checkFilters({...form,nature:'alegre'},scizor);
   assert.equal(bad.ok,false);
-  assert.match(bad.text,/Nivel Max debe ser 1/);
+  assert.match(bad.text,/Naturaleza debe ser Firme/);
   const extra=checkFilters({...form,ivMin5:31},scizor);
   assert.match(extra.text,/Quita IV Velocidad Min 31/);
   assert.equal(checkFilters({nature:'firme'},scizor).ok,null,'unread fields are not errors');

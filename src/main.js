@@ -3,7 +3,8 @@ const {app,BrowserWindow,desktopCapturer,ipcMain,screen,clipboard,nativeImage,gl
 const path=require('node:path');
 const crypto=require('node:crypto');
 const {openDatabase,identity}=require('./database');
-const {assess}=require('./brain');
+const {assess,learnMultipliers}=require('./brain');
+const {targetsFor,speciesKey}=require('./lines');
 const {availableToSpend}=require('./market');
 const {PRIORITY_PROFILES}=require('./priority-profiles');
 const {createRecognizer}=require('./recognition');
@@ -211,9 +212,26 @@ async function showResults(rows,version,layout=null){
   lastDisplayedRows=rows;lastDisplayedLayout=layout;
   place(bounds);
 }
+let multipliers=null,multipliersAt=0;
 function brainOptions(){
   const fee=storage.settings().listingFee;
-  return {profiles:PRIORITY_PROFILES,balance:storage.latestBalance(),fee:Number.isSafeInteger(fee)?fee:null};
+  // Price growth per extra 31, relearned from the whole database every minute.
+  if(!multipliers||Date.now()-multipliersAt>60_000){
+    try{multipliers=learnMultipliers(storage.recentPrices());}catch{}
+    multipliersAt=Date.now();
+  }
+  return {profiles:PRIORITY_PROFILES,balance:storage.latestBalance(),fee:Number.isSafeInteger(fee)?fee:null,
+    multipliers:multipliers||undefined};
+}
+// Ads of the final forms a base species evolves into (Litwick → Chandelure).
+function lineSamplesFor(species,cache=new Map()){
+  const finals=[...new Set(targetsFor(species,PRIORITY_PROFILES).map(p=>p.name.replace(/\s*\(.*\)$/,'')))]
+    .filter(n=>speciesKey(n)!==speciesKey(species));
+  return finals.flatMap(n=>{
+    const k=n.toLowerCase();
+    if(!cache.has(k))cache.set(k,storage.marketSamples(n));
+    return cache.get(k);
+  });
 }
 function recentEvaluated(profiles){
   const recent=storage.recent().slice(0,15),options=brainOptions();
@@ -221,7 +239,7 @@ function recentEvaluated(profiles){
   return recent.map(row=>{
     const species=String(row.species||'').toLowerCase();
     if(!cache.has(species))cache.set(species,storage.marketSamples(row.species));
-    const ev=assess({...row,fingerprint:identity(row)},cache.get(species),options);
+    const ev=assess({...row,fingerprint:identity(row)},cache.get(species),{...options,lineSamples:lineSamplesFor(row.species)});
     const p=profiles.find(p=>p.searchSpecies.toLowerCase()===species);
     const q=grade(row,ev,p);
     return {...row,ivQuality:q.iv,revQuality:ev.score,criQuality:q.cri,fitQuality:q.fit,
@@ -534,7 +552,8 @@ async function tick(){
       level:row.level,nature:row.nature,ivs:row.ivs});
     for(const row of rows){
       const ev=assess({...row,fingerprint:identity(row)},samplesFor(row.species),
-        {...options,sales:salesCache.get(row.species)??salesCache.set(row.species,storage.salesFor(row.species)).get(row.species)});
+        {...options,lineSamples:lineSamplesFor(row.species,sampleCache),
+          sales:salesCache.get(row.species)??salesCache.set(row.species,storage.salesFor(row.species)).get(row.species)});
       decisions.push({...pick(row),...ev});
     }
     // Incomplete rows stay pending, except for clear budget exclusions.
