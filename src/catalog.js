@@ -2,6 +2,7 @@
 // Audited starter catalog for PokéRadar. A hidden ability is a conditional
 // competitive option, NOT evidence that it is obtainable in current PokeMMO.
 const ABILITY_UNVERIFIED='sin_verificar';
+const {findPriority,PRIORITY_PROFILES}=require('./priority-profiles');
 const raw=[
   ['staryu','Staryu','Starmie','Miedosa',[3,5],[0,2,3,4,5],
     ['Cura Natural'],'Cálculo Final','Cura Natural','Cura Natural',[], 'Sin género: crianza con Ditto.'],
@@ -74,7 +75,19 @@ function validateCatalog(entries=CATALOG){
   }
   return true;
 }
-function findCatalog(species){return BY_SPECIES.get(String(species||'').trim().toLowerCase())||null;}
+function findCatalog(species){
+  const initial=BY_SPECIES.get(String(species||'').trim().toLowerCase());
+  if(initial)return initial;
+  const p=findPriority(species);
+  if(!p||!p.requiredIvs.length)return null;
+  return {
+    id:'priority-'+p.id,species:p.name,evolution:p.name,nature:p.nature,
+    requiredIvs:p.requiredIvs,competitiveIvs:p.requiredIvs,
+    normalAbilities:[p.ability],hiddenAbility:p.hidden?p.ability:null,
+    hiddenAvailability:'sin_verificar',preferredEvolution:p.ability,
+    userCurated:true,abilityChecked:false,priority:p.id
+  };
+}
 function relevantIvs(profile,row){
   if(!profile||!Array.isArray(row?.ivs)||row.ivs.length!==6)return null;
   const chosen=profile.requiredIvs.filter(i=>row.ivs[i]===31).length;
@@ -93,4 +106,4 @@ function catalogFit(row,profile=findCatalog(row?.species)){
     natureMatches:r.nature,abilityChecked:false};
 }
 validateCatalog();
-module.exports={CATALOG,IV_NAMES,validateCatalog,findCatalog,relevantIvs,catalogFit};
+module.exports={CATALOG,PRIORITY_PROFILES,IV_NAMES,validateCatalog,findCatalog,relevantIvs,catalogFit};

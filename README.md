@@ -164,3 +164,17 @@ SQLite se migra sin destruir registros al esquema **v5** y crea `catalog_profile
 Las pruebas unitarias validan el reemplazo de **todos** los selectores GDI/PrintWindow, el respaldo visual, el diagnóstico persistente y la invalidación de calificaciones obsoletas. Sin acceso al PC Windows 11 ni a los píxeles del juego en tiempo real, no puede asegurarse la disponibilidad de cada motor o el reconocimiento completo 10/10; para eso se requieren pruebas en tu equipo.
 
 Actualizar: `git pull origin main`, `npm install`, `npm run check`, `npm test`, `npm start`.
+
+## v0.7.0 — 110 perfiles competitivos, Base de datos y Proyectos
+
+- Se incorporaron **110 perfiles proporcionados por el usuario** (35 prioritarios y 75 alternativos), con naturaleza, IV 31 principales y secundarios, habilidad objetivo, posible habilidad oculta y marca ★ independiente de su condición oculta. Los campos "Variable" de Ditto y Eevee no generan un IV obligatorio falso.
+- La habilidad se trata siempre como **objetivo por verificar** en PokéMMO. El radar no lee habilidades en la tabla GTL: no se debe recomendar una compra afirmando que se comprobó la habilidad. Se incluyen los Pokémon de evolución por intercambio como **referencias de mercado**, pero **no se agregan al equipo/proyectos**, especialmente Gengar.
+- La página **Pokédex ideal** permite consultar el lote inicial de crianza (10 perfiles) o los nuevos 110 perfiles competitivos. La nueva página **Base de datos** permite buscar naturaleza, IV, habilidad, mínimos anunciados **para naturaleza/IV/etapa compatibles**, mínimos verificados y número de muestras sin confundir objetivos con ofertas.
+- La nueva página **Proyectos** registra 13 objetivos iniciales derivados del equipo actual, permite añadir otros del catálogo de 110 sin evoluciones obligatorias por intercambio, y guarda orden editable, tipo de adquisición (compra, crianza, ambos), progreso y presupuesto propio. Se conservan los estados originales del equipo por separado para evitar marcarlos como adquiridos por error.
+- Migración de SQLite de versión 5 a 6 **sin borrar anuncios, precios, historiales, ajustes ni datos de crianza**. Los 110 perfiles se insertan en `competitive_profiles`; los proyectos se conservan en `target_projects`. Al reiniciar no se reinicializan proyectos editados.
+- La calificación preliminar de un Pokémon evolucionado también puede compararse con el perfil definido por el usuario, **sin afirmar que su habilidad fue comprobada**.
+- Las observaciones del GTL y el historial de ventas permanecen separados de los 110 perfiles ideales. Un precio anunciado no equivale a una venta realizada.
+
+Actualizar desde Windows: `git pull origin main`, `npm install`, `npm run check`, `npm test`, `npm start`.
+
+Nota: la alineación de las etiquetas flotantes depende de la geometría detectada en el juego real y requiere otra ronda de captura/validación en Windows para confirmar la coincidencia fila por fila; esta versión no afirma haber resuelto ese problema pendiente.

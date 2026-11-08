@@ -140,6 +140,7 @@ function publishData(force=false){
   summary.activity=marketCache.activity;
   broadcast('radar:data',{
     summary,profiles,prices,catalog:storage.catalogProfiles(),
+     competitive:storage.competitiveProfiles(),projects:storage.projects(),
     coverage:coverage(profiles),recent:recentEvaluated(profiles),history:storage.history(),
     trades:storage.transactionHistory(),settings:storage.settings(),balance:storage.latestBalance()
   });
@@ -484,6 +485,7 @@ function handlers(){
     summary.research=intelligence.suggestions;
     summary.activity=intelligence.activity;
     return {status,settings:storage.settings(),summary,catalog:storage.catalogProfiles(),
+     competitive:storage.competitiveProfiles(),projects:storage.projects(),
     profiles,prices:storage.targetPrices(profiles),coverage:coverage(profiles),
     recent:recentEvaluated(profiles),history:storage.history(),trades:storage.transactionHistory(),
     balance:storage.latestBalance(),diagnostics:diagnostics?.snapshot()};});
@@ -540,6 +542,16 @@ function handlers(){
     storage.applySettings({teamOverrides:validated});
     publishData(true);
     return {ok:true};
+  });
+  ipcMain.handle('radar:createProject',(_e,profileId)=>{
+    const projects=storage.createProject(profileId);
+    publishData(true);
+    return {ok:true,projects};
+  });
+  ipcMain.handle('radar:project',(_e,id,changes)=>{
+    const projects=storage.updateProject(id,changes);
+    publishData(true);
+    return {ok:true,projects};
   });
   ipcMain.handle('radar:history',()=>({history:storage.history(),trades:storage.transactionHistory()}));
   ipcMain.handle('radar:trade',(_e,record)=>{storage.addTransaction(record);publishData(true);return {ok:true};});

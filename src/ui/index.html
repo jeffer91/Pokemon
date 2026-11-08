@@ -17,6 +17,8 @@
     <button class="tab" data-tab="equipo">Equipo ideal</button>
     <button class="tab" data-tab="catalogo">Pokédex ideal</button>
     <button class="tab" data-tab="precios">Precios ideales</button>
+    <button class="tab" data-tab="base">Base de datos</button>
+    <button class="tab" data-tab="proyectos">Proyectos</button>
     <button class="tab" data-tab="buscar">Buscar</button>
     <button class="tab" data-tab="historial">Historial</button>
     <button class="tab" data-tab="diagnostico">Diagnóstico</button>
@@ -69,14 +71,15 @@
   </section>
   <section class="page" data-page="catalogo" hidden>
     <div class="panel">
-      <div class="heading"><h2>Pokédex ideal</h2><span id="catalog-count">Lote 1 · 10 perfiles</span></div>
+      <div class="heading"><h2>Pokédex ideal</h2><span id="catalog-count">110 perfiles competitivos</span></div>
       <p class="hint">Naturaleza, IV prioritarios y habilidades para comprar, criar o investigar. La habilidad no se lee actualmente del GTL: siempre se debe confirmar.</p>
       <div class="price-filter">
+        <label>Catálogo <select id="catalog-source"><option value="priority">Competitivos (110)</option><option value="starter">Crianza inicial (10)</option></select></label>
         <label>Buscar <input type="search" id="catalog-search" placeholder="Nombre o evolución"></label>
         <label>Perfil <select id="catalog-kind"><option value="all">Todos</option><option value="physical">Ataque físico</option><option value="special">Ataque especial</option></select></label>
       </div>
       <div id="catalog-items" class="catalog-grid"></div>
-      <p class="hint" id="catalog-feedback">Estos diez perfiles se amplían por lotes sin borrar precios ni historial.</p>
+      <p class="hint" id="catalog-feedback">Los 110 objetivos son referencias del usuario; confirmar habilidades y disponibilidad. El lote inicial sigue disponible.</p>
     </div>
   </section>
   <section class="page" data-page="precios" hidden>
@@ -97,6 +100,39 @@
         <table><thead><tr><th>Pokémon</th><th>Naturaleza</th><th>IV</th><th>Nivel</th><th>Precio</th><th>Estado</th><th>Visto</th></tr></thead>
         <tbody id="ideal-offers"></tbody></table>
       </div>
+    </div>
+  </section>
+  <section class="page" data-page="base" hidden>
+    <div class="panel">
+      <div class="heading"><h2>Base de datos</h2><span id="base-count">110 perfiles</span></div>
+      <p class="hint">Referencias ideales definidas por ti, separadas de los anuncios observados. Habilidades pendientes de comprobar en PokéMMO.</p>
+      <div class="price-filter">
+        <label>Pokémon <input type="search" id="base-search" placeholder="Buscar Pokémon o habilidad"></label>
+        <label>Grupo <select id="base-group">
+          <option value="all">Todos (110)</option>
+          <option value="prioritario">Competitivos prioritarios (35)</option>
+          <option value="alternativo">Alternativos (75)</option>
+          <option value="observado">Con anuncios registrados</option>
+        </select></label>
+      </div>
+      <div class="scroll price-scroll large-scroll">
+        <table><thead><tr><th>#</th><th>Pokémon</th><th>Naturaleza</th><th>IV 31</th>
+        <th>Habilidad objetivo*</th><th>Oculta*</th><th>Mín. observado</th><th>Mín. verificado</th><th>Muestras</th></tr></thead>
+        <tbody id="base-rows"></tbody></table>
+      </div>
+      <p class="hint">*Información aportada como objetivo y no verificada en el juego. «Mín. observado» es precio anunciado, no venta. Las muestras verificadas exigen varias lecturas consistentes.</p>
+    </div>
+  </section>
+  <section class="page" data-page="proyectos" hidden>
+    <div class="panel">
+      <div class="heading"><h2>Proyectos</h2><span id="projects-count">Ordenar prioridades</span></div>
+      <p class="hint">Planifica titulares, suplentes y otros objetivos. Cambia prioridad, método y estado; se guarda en SQLite.</p>
+      <div class="price-filter">
+        <label>Añadir objetivo <select id="project-add"><option value="">Elegir Pokémon competitivo</option></select></label>
+        <button type="button" id="project-add-button" class="secondary">Añadir proyecto</button>
+      </div>
+      <div id="projects-items" class="projects-grid"></div>
+      <p class="hint" id="projects-feedback" role="status"></p>
     </div>
   </section>
   <section class="page" data-page="buscar" hidden>

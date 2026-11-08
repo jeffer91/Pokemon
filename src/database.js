@@ -7,6 +7,8 @@ const {validListing, researchSuggestions} = require('./market');
 const {validateOverrides,priceSummary,matchProfile}=require('./team');
 const {CATALOG,validateCatalog}=require('./catalog');
 const {suggestedSearches}=require('./research');
+const {PRIORITY_PROFILES}=require('./priority-profiles');
+const {TEAM}=require('./team');
 
 const DEFAULT_SETTINGS = {listingFee:null, captureEnabled:false, reserveRatio:0.30,
   overlayX:0, overlayY:0, overlayScale:1, consentConfirmed:false, captureEngine:null, teamOverrides:{}};
@@ -17,7 +19,7 @@ function openDatabase(folder) {
   const db = new DatabaseSync(filename);
   db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=3000;');
   const version=db.prepare('PRAGMA user_version').get().user_version;
-  if(version > 5) throw new Error('Esta base requiere una versión más reciente de PokéRadar.');
+  if(version > 6) throw new Error('Esta base requiere una versión más reciente de PokéRadar.');
   if(version < 1) {
     db.exec(`BEGIN IMMEDIATE;
       CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -99,6 +101,37 @@ function openDatabase(folder) {
       db.exec('COMMIT');
     }catch(error){db.exec('ROLLBACK');throw error;}
   }
+  if(version < 6){
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      db.exec(`CREATE TABLE competitive_profiles(
+        id INTEGER PRIMARY KEY CHECK(id BETWEEN 1 AND 110),name TEXT NOT NULL UNIQUE,
+        version INTEGER NOT NULL,profile_json TEXT NOT NULL,updated_at INTEGER NOT NULL);
+        CREATE TABLE target_projects(
+        id TEXT PRIMARY KEY,name TEXT NOT NULL,priority INTEGER NOT NULL,
+        mode TEXT NOT NULL CHECK(mode IN ('compra','crianza','ambos')),
+        status TEXT NOT NULL CHECK(status IN ('pendiente','investigando','cotizando','criando','conseguido')),
+        budget INTEGER CHECK(budget IS NULL OR budget>=0),updated_at INTEGER NOT NULL);
+        PRAGMA user_version=6;`);
+      db.exec('COMMIT');
+    }catch(e){db.exec('ROLLBACK');throw e;}
+  }
+  const priorityInsert=db.prepare(`INSERT INTO competitive_profiles(id,name,version,profile_json,updated_at)
+    VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET
+    name=excluded.name,version=excluded.version,profile_json=excluded.profile_json,
+    updated_at=excluded.updated_at WHERE excluded.version>competitive_profiles.version`);
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const when=Date.now();
+    for(const p of PRIORITY_PROFILES)
+      priorityInsert.run(p.id,p.name,1,JSON.stringify(p),when);
+    if(!db.prepare('SELECT COUNT(*) AS n FROM target_projects').get().n){
+      const seed=db.prepare(`INSERT INTO target_projects(id,name,priority,mode,status,budget,updated_at)
+        VALUES(?,?,?,?,?,?,?)`);
+      TEAM.forEach((p,i)=>seed.run(p.id,p.name,i+1,'ambos','pendiente',null,when));
+    }
+    db.exec('COMMIT');
+  }catch(e){db.exec('ROLLBACK');throw e;}
   // New catalog batches can be delivered via main without replacing user data.
   validateCatalog(CATALOG);
   const catalogInsert=db.prepare(`INSERT INTO catalog_profiles(id,species,version,profile_json,updated_at)
@@ -228,6 +261,83 @@ function openDatabase(folder) {
     return db.prepare('SELECT profile_json FROM catalog_profiles ORDER BY rowid').all()
       .map(r=>JSON.parse(r.profile_json));
   }
+  function competitiveProfiles(){
+    // Comparable only if species, level (when breeding from base), nature
+    // and each required IV match. Ability remains unverified by OCR.
+    const records=db.prepare(`SELECT lower(species) AS species, nature,level,price,ivs_json,verified
+      FROM listings WHERE last_seen>=? ORDER BY last_seen DESC LIMIT 5000`)
+      .all(Date.now()-7*86400000);
+    const grouped=new Map();
+    for(const item of records){
+      if(!grouped.has(item.species))grouped.set(item.species,[]);
+      grouped.get(item.species).push(item);
+    }
+    return db.prepare('SELECT profile_json FROM competitive_profiles ORDER BY id').all()
+      .map(({profile_json})=>{
+        const p=JSON.parse(profile_json);
+        const parent=TEAM.find(t=>t.name===p.name);
+        const species=(parent?.searchSpecies||p.name).toLowerCase();
+        const matched=(grouped.get(species)||[]).filter(row=>{
+          if(parent && parent.searchSpecies.toLowerCase()!==p.name.toLowerCase() && row.level!==1)
+            return false;
+          if(!p.requiredIvs.length)return false;
+          if(row.nature.toLocaleLowerCase('es')!==p.nature.toLocaleLowerCase('es'))return false;
+          let ivs;try{ivs=JSON.parse(row.ivs_json);}catch{return false;}
+          return p.requiredIvs.every(i=>ivs[i]===31);
+        });
+        const trusted=matched.filter(row=>row.verified===1);
+        return {...p,market:{
+          species,observations:matched.length,
+          minimumObserved:matched.length?Math.min(...matched.map(r=>r.price)):null,
+          verified:trusted.length,
+          minimumVerified:trusted.length?Math.min(...trusted.map(r=>r.price)):null
+        }};
+      });
+  }
+  const projectQuery=db.prepare('SELECT * FROM target_projects ORDER BY priority,id');
+  function projects(){return projectQuery.all();}
+  function createProject(profileId){
+    if(!Number.isInteger(profileId))throw Error('Perfil competitivo inválido');
+    const profile=PRIORITY_PROFILES.find(p=>p.id===profileId && !p.excludeFromTeam);
+    if(!profile)throw Error('Objetivo excluido o desconocido');
+    const id='competitive-'+profile.id;
+    if(db.prepare('SELECT id FROM target_projects WHERE id=? OR lower(name)=lower(?)')
+      .get(id,profile.name))throw Error('El proyecto ya está en tu lista');
+    const priority=projectQuery.all().length+1;
+    db.prepare(`INSERT INTO target_projects(id,name,priority,mode,status,budget,updated_at)
+      VALUES(?,?,?,?,?,?,?)`).run(id,profile.name,priority,'ambos','pendiente',null,Date.now());
+    return projects();
+  }
+  function updateProject(id,changes){
+    if(typeof id!=='string'||!projectQuery.all().some(p=>p.id===id)||
+       !changes||typeof changes!=='object'||Array.isArray(changes)||
+       Object.keys(changes).some(k=>!['priority','mode','status','budget'].includes(k)))
+      throw Error('Proyecto inválido');
+    const previous=db.prepare('SELECT * FROM target_projects WHERE id=?').get(id);
+    if(!previous)throw Error('Proyecto desconocido');
+    const mode=changes.mode??previous.mode,status=changes.status??previous.status;
+    const budget=Object.hasOwn(changes,'budget')?changes.budget:previous.budget;
+    const priority=changes.priority??previous.priority;
+    if(!['compra','crianza','ambos'].includes(mode)||
+       !['pendiente','investigando','cotizando','criando','conseguido'].includes(status)||
+       (budget!==null&&(!Number.isSafeInteger(budget)||budget<0))||
+       !Number.isInteger(priority)||priority<1||priority>projectQuery.all().length)
+      throw Error('Valor de proyecto inválido');
+    db.exec('BEGIN IMMEDIATE');
+    try{
+      if(priority!==previous.priority){
+        const list=projectQuery.all();
+        const ix=list.findIndex(p=>p.id===id);
+        list.splice(priority-1,0,...list.splice(ix,1));
+        const reorder=db.prepare('UPDATE target_projects SET priority=?,updated_at=? WHERE id=?');
+        list.forEach((p,i)=>reorder.run(i+1,Date.now(),p.id));
+      }
+      db.prepare('UPDATE target_projects SET mode=?,status=?,budget=?,updated_at=? WHERE id=?')
+        .run(mode,status,budget,Date.now(),id);
+      db.exec('COMMIT');
+    }catch(e){db.exec('ROLLBACK');throw e;}
+    return projects();
+  }
   function targetPrices(profiles){
     const cutoff=Date.now()-7*86400000;
     return profiles.map(profile=>{
@@ -278,6 +388,7 @@ function openDatabase(folder) {
     const file=path.join(dest,`pokeradar-${new Date().toISOString().slice(0,10)}.sqlite`);
     if(!fs.existsSync(file)) await backup(db,file);return file;}
   return {db,filename,settings:getSettings,applySettings,recordListings,recordMarketScan,candidates,targetPrices,marketIntelligence,catalogProfiles,recordRecommendation,
-    recordBalance,latestBalance,recent,history,stats,summary,addTransaction,transactionHistory,saveBackup,close:()=>db.close()};
+    recordBalance,latestBalance,recent,history,stats,summary,addTransaction,transactionHistory,saveBackup,
+    competitiveProfiles,projects,createProject,updateProject,close:()=>db.close()};
 }
 module.exports={openDatabase,identity,DEFAULT_SETTINGS};

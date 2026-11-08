@@ -34,6 +34,8 @@ function renderData(data){
   $('balance').textContent=currency(data.balance);
   renderTeamData(data);
   renderCatalog(data.catalog||[]);
+  renderCompetitive(data.competitive||[]);
+  renderProjects(data.projects||[]);
   renderActivity(s.activity||[]);
   $('radar-tip').textContent=(s.trusted||0)+' precios verificados · '+(s.unverified||0)+
     ' pendientes · REV sin nota cuando faltan comparables · CRI* indica potencial por IV, no compatibilidad de crianza.';
@@ -394,9 +396,36 @@ async function setOwned(id,status,button){
 let catalogItems=[],lastCatalogSignature='';
 function drawCatalog(){
   const target=$('catalog-items');target.replaceChildren();
-  const query=$('catalog-search').value.trim().toLowerCase();
+  const query=$('catalog-search').value.trim().toLocaleLowerCase('es');
   const kind=$('catalog-kind').value;
   let shown=0;
+  if($('catalog-source').value==='priority'){
+    for(const p of competitive){
+      if(query&&!(p.name+' '+p.ability).toLocaleLowerCase('es').includes(query))continue;
+      const special=p.requiredIvs.includes(3);
+      if(kind==='special'&&!special||kind==='physical'&&special)continue;
+      shown++;
+      const card=document.createElement('article');card.className='catalog-card';
+      const title=document.createElement('strong');
+      title.textContent=p.id+'. '+p.name+(p.featured?' ★':'');
+      const nature=document.createElement('div');nature.className='catalog-nature';
+      nature.textContent=p.nature+' · '+(p.requiredIvs.length?
+        [p.primaryIV,p.secondaryIV].map(x=>x+' 31').join(' + '):'IV variables');
+      const ability=document.createElement('small');
+      ability.textContent='Habilidad objetivo: '+p.ability;
+      const hidden=document.createElement('small');hidden.className='catalog-warning';
+      hidden.textContent='Oculta: '+p.hiddenLabel+' · disponibilidad sin verificar';
+      const market=document.createElement('small');
+      market.textContent='Mínimo observado: '+currency(p.market?.minimumObserved)+
+        ' · '+(p.market?.observations||0)+' registros';
+      const note=document.createElement('small');
+      note.textContent=p.note||(p.group==='prioritario'?'Prioritario':'Alternativo');
+      card.append(title,nature,ability,hidden,market,note);target.append(card);
+    }
+    if(!shown)target.textContent='No hay perfiles para este filtro.';
+    $('catalog-count').textContent=shown+' de '+competitive.length+' perfiles';
+    return;
+  }
   for(const p of catalogItems){
     if(query&&!(p.species+' '+p.evolution).toLowerCase().includes(query))continue;
     const special=p.requiredIvs.includes(3);
@@ -433,6 +462,7 @@ function renderCatalog(items){
 }
 $('catalog-search').addEventListener('input',drawCatalog);
 $('catalog-kind').addEventListener('change',drawCatalog);
+$('catalog-source').addEventListener('change',drawCatalog);
 function renderActivity(rows){
   const body=$('market-activity');body.replaceChildren();
   for(const r of rows){
@@ -448,3 +478,139 @@ function renderActivity(rows){
     tr.append(td);body.append(tr);
   }
 }
+
+
+// Target profiles are user intentions, not confirmed market offers.
+let competitive=[],compSignature='';
+function renderCompetitive(items){
+  if(!Array.isArray(items))return;
+  const signature=JSON.stringify(items);
+  if(signature===compSignature)return;
+  compSignature=signature;competitive=items;drawCompetitive();
+  syncAddProjectOptions();
+  if($('catalog-source').value==='priority')drawCatalog();
+}
+function drawCompetitive(){
+  const body=$('base-rows');body.replaceChildren();
+  const query=$('base-search').value.trim().toLocaleLowerCase('es');
+  const group=$('base-group').value;
+  let count=0;
+  for(const p of competitive){
+    const search=(p.name+' '+p.ability+' '+p.nature).toLocaleLowerCase('es');
+    if(query&&!search.includes(query))continue;
+    if(group==='observado'&&!(p.market?.observations>0))continue;
+    if(group!=='observado'&&group!=='all'&&p.group!==group)continue;
+    count++;
+    const tr=document.createElement('tr');
+    const fields=[String(p.id),p.name+(p.featured?' ★':''),
+      p.nature,p.requiredIvs?.length?
+        [p.primaryIV,p.secondaryIV].map(x=>x+'31').join(' · '):'Variable',
+      p.ability,p.hiddenLabel,currency(p.market?.minimumObserved),
+      currency(p.market?.minimumVerified),
+      String(p.market?.observations||0)+' ('+String(p.market?.verified||0)+' verificadas)'];
+    fields.forEach((value,i)=>{
+      const td=document.createElement('td');
+      td.textContent=value;td.className=i===1?'strong-cell':'';
+      tr.append(td);
+    });
+    if(p.excludeFromTeam)tr.title='Referencia de mercado; evolución por intercambio';
+    body.append(tr);
+  }
+  $('base-count').textContent=count+' de '+competitive.length+' perfiles';
+  if(!count){
+    const tr=document.createElement('tr'),td=document.createElement('td');
+    td.colSpan=9;td.textContent='No hay registros para ese filtro.';
+    tr.append(td);body.append(tr);
+  }
+}
+$('base-search').addEventListener('input',drawCompetitive);
+$('base-group').addEventListener('change',drawCompetitive);
+
+let projectList=[],projectSignature='';
+function renderProjects(items){
+  if(!Array.isArray(items))return;
+  const signature=JSON.stringify(items);
+  if(signature===projectSignature)return;
+  projectSignature=signature;projectList=items;drawProjects();syncAddProjectOptions();
+}
+async function saveProject(id,patch){
+  const feedback=$('projects-feedback');
+  feedback.textContent='Guardando proyecto…';
+  try{
+    const result=await window.radar.updateProject(id,patch);
+    if(!result?.ok)throw Error('No se completó la actualización');
+    feedback.textContent='Proyecto actualizado.';
+    renderProjects(result.projects);
+  }catch(e){feedback.textContent='No se pudo guardar: '+String(e.message||e);}
+}
+function drawProjects(){
+  const target=$('projects-items');target.replaceChildren();
+  $('projects-count').textContent=projectList.length+' objetivos';
+  projectList.forEach((p,i)=>{
+    const card=document.createElement('article');card.className='project-card';
+    const head=document.createElement('div');head.className='project-head';
+    const number=document.createElement('strong');number.textContent=String(i+1).padStart(2,'0');
+    const name=document.createElement('strong');name.textContent=p.name;
+    head.append(number,name);
+    const controls=document.createElement('div');controls.className='project-controls';
+    for(const [symbol,move] of [['↑',-1],['↓',1]]){
+      const button=document.createElement('button');button.type='button';
+      button.className='secondary project-order';button.textContent=symbol;
+      button.disabled=i+move<0||i+move>=projectList.length;
+      button.title='Cambiar prioridad';
+      button.addEventListener('click',()=>saveProject(p.id,{priority:p.priority+move}));
+      controls.append(button);
+    }
+    const mode=document.createElement('select');mode.setAttribute('aria-label','Método: '+p.name);
+    for(const [value,label] of [['ambos','Compra o crianza'],['compra','Compra'],['crianza','Crianza']]){
+      const option=document.createElement('option');option.value=value;option.textContent=label;
+      mode.append(option);
+    }
+    mode.value=p.mode;mode.addEventListener('change',()=>saveProject(p.id,{mode:mode.value}));
+    const status=document.createElement('select');status.setAttribute('aria-label','Estado: '+p.name);
+    for(const [value,label] of [['pendiente','Pendiente'],['investigando','Investigar'],
+      ['cotizando','Cotizando'],['criando','Criando'],['conseguido','Conseguido']]){
+      const option=document.createElement('option');option.value=value;option.textContent=label;
+      status.append(option);
+    }
+    status.value=p.status;status.addEventListener('change',()=>saveProject(p.id,{status:status.value}));
+    const budget=document.createElement('input');budget.type='number';
+    budget.min='0';budget.step='1';budget.placeholder='Presupuesto ¥';
+    budget.setAttribute('aria-label','Presupuesto: '+p.name);
+    budget.value=p.budget===null?'':String(p.budget);
+    const save=document.createElement('button');save.type='button';
+    save.className='secondary';save.textContent='Guardar ¥';
+    save.addEventListener('click',()=>saveProject(p.id,
+      {budget:budget.value===''?null:Number(budget.value)}));
+    controls.append(mode,status,budget,save);
+    card.append(head,controls);target.append(card);
+  });
+}
+
+function syncAddProjectOptions(){
+  const selector=$('project-add'),chosen=selector.value;
+  selector.replaceChildren();
+  const base=document.createElement('option');base.value='';base.textContent='Elegir Pokémon competitivo';
+  selector.append(base);
+  const projects=new Set(projectList.map(p=>p.name.toLocaleLowerCase('es')));
+  for(const profile of competitive){
+    if(profile.excludeFromTeam||projects.has(profile.name.toLocaleLowerCase('es')))continue;
+    const option=document.createElement('option');option.value=String(profile.id);
+    option.textContent=profile.id+'. '+profile.name;selector.append(option);
+  }
+  if(Array.from(selector.options).some(x=>x.value===chosen))selector.value=chosen;
+}
+$('project-add-button').addEventListener('click',async()=>{
+  const id=Number($('project-add').value);
+  if(!Number.isInteger(id)||id<1)return;
+  const button=$('project-add-button');button.disabled=true;
+  $('projects-feedback').textContent='Añadiendo…';
+  try{
+    const result=await window.radar.createProject(id);
+    if(!result.ok)throw Error('La base de datos no confirmó el proyecto');
+    renderProjects(result.projects);
+    $('projects-feedback').textContent='Proyecto añadido.';
+  }catch(error){
+    $('projects-feedback').textContent='Error: '+String(error.message||error);
+  }finally{button.disabled=false;}
+});

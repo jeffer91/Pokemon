@@ -36,7 +36,7 @@ test('SQLite v2 retains verified listings and records partial OCR without mixing
   const scan=db.recordMarketScan({rows:[{...p(),rank:4}],partialRows:[{rank:5,species:'Gible',price:12000,ivs:[31,null,null,null,null,null],missing:'IV_INCOMPLETOS'}],context:'GTL|newest',sort:'newest',wordCount:65,imageHash:'abc'});
   assert.equal(scan.saved,1);assert.equal(scan.partial,1);
   assert.equal(db.summary().total,1);assert.equal(db.summary().scans,1);assert.equal(db.summary().partials,1);
-  assert.equal(db.db.prepare('PRAGMA user_version').get().user_version,5);
+  assert.equal(db.db.prepare('PRAGMA user_version').get().user_version,6);
   db.close();fs.rmSync(folder,{recursive:true,force:true});
 });
 
@@ -120,7 +120,7 @@ test('SQLite persists editable targets and matches filtered ideal market prices'
 test('catálogo v5 y sugerencias quedan disponibles al reiniciar, sin borrar observaciones',()=>{
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'radar-catalog-'));
   let db=openDatabase(dir);
-  assert.equal(db.db.prepare('PRAGMA user_version').get().user_version,5);
+  assert.equal(db.db.prepare('PRAGMA user_version').get().user_version,6);
   assert.equal(db.catalogProfiles().length,10);
   assert.equal(db.catalogProfiles().find(p=>p.species==='Shroomish').evolution,'Breloom');
   const row={species:'Gible',nature:'alegre',level:1,sex:'M',
@@ -133,5 +133,58 @@ test('catálogo v5 y sugerencias quedan disponibles al reiniciar, sin borrar obs
   db=openDatabase(dir);
   assert.equal(db.catalogProfiles().length,10);
   assert.equal(db.recent().find(p=>p.species==='Gible').price,14000);
+  db.close();fs.rmSync(dir,{recursive:true,force:true});
+});
+
+test('110 competitive targets are persistent, separate from observed market prices',()=>{
+  const folder=fs.mkdtempSync(path.join(os.tmpdir(),'radar-competitive-'));
+  let db=openDatabase(folder);
+  assert.equal(db.db.prepare('SELECT COUNT(*) n FROM competitive_profiles').get().n,110);
+  assert.equal(db.competitiveProfiles().length,110);
+  const priority=db.competitiveProfiles();
+  assert.equal(priority[0].name,'Garchomp');
+  assert.deepEqual(priority[0].requiredIvs,[1,5]);
+  assert.equal(priority[0].hidden,true);
+  assert.equal(priority[12].name,'Gengar');
+  assert.equal(priority[12].excludeFromTeam,true);
+  assert.equal(priority[103].name,'Ditto');
+  assert.deepEqual(priority[103].requiredIvs,[]);
+  assert.equal(db.summary().total,0);
+  assert.equal(db.projects().length,13);
+  assert.equal(db.projects().some(p=>p.name==='Gengar'),false);
+  assert.throws(()=>db.createProject(13));
+  const added=db.createProject(5);
+  assert.equal(added.length,14);
+  assert.equal(added[13].name,'Excadrill');
+  assert.throws(()=>db.createProject(5));
+  const initial=db.projects();
+  db.updateProject('breloom',{priority:1,mode:'crianza',status:'cotizando',budget:15000});
+  assert.equal(db.projects()[0].id,'breloom');
+  assert.equal(db.projects()[0].budget,15000);
+  assert.equal(db.projects()[0].mode,'crianza');
+  assert.throws(()=>db.updateProject('gengar',{priority:1}));
+  assert.throws(()=>db.updateProject('breloom',{budget:-50}));
+  db.close();
+  db=openDatabase(folder);
+  assert.equal(db.competitiveProfiles().length,110);
+  assert.equal(db.projects()[0].id,'breloom');
+  assert.equal(db.projects()[0].status,'cotizando');
+  assert.equal(db.summary().total,0);
+  db.close();fs.rmSync(folder,{recursive:true,force:true});
+});
+
+test('competitive minimum uses matching nature, IV 31 and breeding level, not generic species',()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'radar-comparable-'));
+  const db=openDatabase(dir);
+  const acceptable={species:'Shroomish',level:1,nature:'alegre',
+    sex:'M',ivs:[10,31,9,7,8,31],price:90000,rank:1,ocrReliable:true};
+  const unrelated={...acceptable,price:1200,nature:'modesta',rank:2};
+  const evolved={...acceptable,price:900,level:31,rank:3};
+  db.recordMarketScan({rows:[acceptable,unrelated,evolved],
+    context:'tests',imageHash:'unique'});
+  const breloom=db.competitiveProfiles().find(p=>p.name==='Breloom');
+  assert.equal(breloom.market.minimumObserved,90000);
+  assert.equal(breloom.market.observations,1);
+  assert.equal(breloom.market.minimumVerified,null);
   db.close();fs.rmSync(dir,{recursive:true,force:true});
 });

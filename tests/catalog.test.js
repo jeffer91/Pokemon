@@ -18,7 +18,7 @@ test('primer lote contiene diez perfiles únicos con atributos y habilidad ocult
   assert.equal(findCatalog('Litwick').hiddenAbility,'Allanamiento');
   assert.equal(findCatalog('Magikarp').hiddenBase,'Cobardía');
   assert.equal(findCatalog('Magikarp').hiddenAbility,'Autoestima');
-  assert.equal(findCatalog('Gengar'),null);
+  assert.equal(findCatalog('Gengar').nature,'Miedosa');
 });
 test('IV y naturaleza aportan ajuste al objetivo sin afirmar habilidad comprobada',()=>{
   const target=findCatalog('Gible');
@@ -66,4 +66,20 @@ test('solo anuncios verificados alimentan mínimos y medianas de comparables',()
   const g=summarizeActivity(mixed,NOW).comparable.find(x=>x.verified===5);
   assert.equal(g.min,10000);
   assert.equal(g.median,13000);
+});
+
+test('110 competitive species keep their user-defined priority and hidden markers',()=>{
+  const {PRIORITY_PROFILES,findPriority}=require('../src/priority-profiles');
+  assert.equal(PRIORITY_PROFILES.length,110);
+  assert.equal(PRIORITY_PROFILES.filter(p=>p.group==='prioritario').length,35);
+  assert.equal(PRIORITY_PROFILES.filter(p=>p.group==='alternativo').length,75);
+  assert.equal(PRIORITY_PROFILES[0].name,'Garchomp');
+  assert.deepEqual(findPriority('Garchomp').requiredIvs,[1,5]);
+  assert.equal(findPriority('Breloom').ability,'Experto');
+  assert.equal(findPriority('Gengar').excludeFromTeam,true);
+  assert.deepEqual(findPriority('Ditto').requiredIvs,[]);
+  assert.deepEqual(findPriority('Eevee').requiredIvs,[]);
+  assert.ok(PRIORITY_PROFILES.every(p=>p.abilityAvailability==='sin_verificar'));
+  assert.equal(findCatalog('Volcarona').nature,'Miedosa');
+  assert.equal(catalogFit({species:'Volcarona',nature:'Miedosa',ivs:[12,12,12,31,12,31]}).score,10);
 });
