@@ -122,7 +122,7 @@ function renderEngines(engines){
     const extra=document.createElement('small');extra.textContent=item.detail||'';
     details.append(title,sub,extra);
     const status=document.createElement('span');status.className='diag-code';
-    status.textContent=item.selected?'ELEGIDO':item.state==='ok'?'OK':
+    status.textContent=item.selected?'ELEGIDO':item.state==='ok'?'OK':item.state==='waiting'?'ESPERA':
       item.state==='error'?'FALLÓ':'—';
     row.append(dot,details,status);root.append(row);
   }
@@ -151,6 +151,25 @@ window.radar.engines().then(renderEngines).catch(()=>{});
 function renderDiagnostics(info){
   if(!info)return;
   if(info.engines)renderEngines(info.engines);
+  const rows=Array.isArray(info.ocrRows)?info.ocrRows:[];
+  $('ocr-detail-count').textContent=rows.filter(r=>r.state==='complete').length+
+    '/10 completos';
+  const table=$('ocr-detail-rows');table.replaceChildren();
+  for(const r of rows){
+    const tr=document.createElement('tr');
+    const columns=[
+      String(r.rank),r.species||'—',currency(r.price),
+      (r.ivs||[]).map(v=>Number.isInteger(v)?v:'?').join('/'),
+      r.missingFields?.length?r.missingFields.join(', '):'Completo'
+    ];
+    for(const field of columns){
+      const td=document.createElement('td');td.textContent=field;tr.append(td);
+    }
+    table.append(tr);
+  }
+  $('ocr-balance').textContent='Saldo OCR: '+
+    (Number.isSafeInteger(info.balance?.amount)?currency(info.balance.amount):'sin confirmar')+
+    ' · '+(info.balance?.source||'aún no leído');
   const counts=info.counts||{};
   $('diag-count').textContent=(counts.scans||0)+' lecturas · '+(counts.saved||0)+' guardados';
   const host=$('diag-stages');host.replaceChildren();

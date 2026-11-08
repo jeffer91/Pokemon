@@ -177,7 +177,8 @@ function openDatabase(folder) {
       }
       for(const item of acceptedPartials){
         const fields={species:item.species||null,level:item.level??null,nature:item.nature||null,
-          price:item.price??null,ivs:item.ivs||[],sex:item.sex||'?',rank:item.rank};
+          price:item.price??null,ivs:item.ivs||[],sex:item.sex||'?',rank:item.rank,
+          missingFields:(item.missingFields||[item.missing||'ILEGIBLE']).slice(0,9)};
         addPartial.run(batch.lastInsertRowid,item.rank,String(item.missing||'ILEGIBLE').slice(0,40),
           JSON.stringify(fields).slice(0,800));
       }

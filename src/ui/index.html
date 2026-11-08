@@ -130,6 +130,14 @@
       <div id="diag-stages" class="diag-list"></div>
     </div>
     <div class="panel">
+      <div class="heading"><h2>OCR por fila</h2><span id="ocr-detail-count">Sin lecturas</span></div>
+      <div class="scroll price-scroll">
+        <table><thead><tr><th>Fila</th><th>Pokémon</th><th>Precio</th><th>IV</th><th>Campos pendientes</th></tr></thead>
+        <tbody id="ocr-detail-rows"></tbody></table>
+      </div>
+      <p class="hint" id="ocr-balance">Saldo: sin comprobar.</p>
+    </div>
+    <div class="panel">
       <div class="heading"><h2>Motores de captura</h2><span id="eng-selected">Sin seleccionar</span></div>
       <div id="engine-results" class="engine-list" aria-live="polite">Sin pruebas todavía.</div>
       <button id="run-engines" type="button" class="secondary diag-copy">Probar 5 motores</button>

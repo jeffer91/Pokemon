@@ -27,3 +27,19 @@ test('the logger deduplicates repeated unchanged error statuses',()=>{
   assert.equal(d.snapshot().counts.errors,1);
   fs.rmSync(tmp,{recursive:true,force:true});
 });
+
+test('diagnostics retain per-row OCR failures without storing screenshots',()=>{
+  const tmp=fs.mkdtempSync(path.join(os.tmpdir(),'pokeradar-rows-'));
+  const d=createDiagnostics(tmp);
+  d.setOcrRows([{rank:2,species:'Shroomish',level:8,nature:'hurana',price:9000,
+    ivs:[30,31,29,null,25,2],state:'partial',
+    missingFields:['IV_ATAQUE_ESP']}]);
+  d.setBalance(38096,'HUD OCR ampliado');
+  const rows=d.snapshot().ocrRows;
+  assert.equal(rows.length,1);
+  assert.equal(rows[0].missingFields[0],'IV_ATAQUE_ESP');
+  assert.match(d.report(),/Fila 2: partial/);
+  assert.match(d.report(),/38096/);
+  assert.doesNotMatch(d.report(),/data:image/);
+  fs.rmSync(tmp,{recursive:true,force:true});
+});

@@ -1,6 +1,6 @@
 'use strict';
 // Independent capture engines. All images remain in memory; diagnostics only store metadata.
-const TITLE=/poke[\s_-]*mmo/i;
+const TITLE=/pok[eé][\s_-]*mmo/i;
 const ENGINE_LABELS=Object.freeze({
   'electron-window':'Electron · Ventana',
   'electron-win32':'Electron · Pantalla + Win32',
@@ -38,10 +38,14 @@ function createGameCapture({desktopCapturer,screen,locateWindow,inspectThumbnail
   function update(id,result,elapsed){
     const good=!!result.image && health(result.image).valid;
     const h=good?health(result.image):{gtl:false,score:0,panelRatio:0};
+    if(good && result.visibleGtl===undefined)try{
+      const detected=locateGtlPanel(result.image);
+      if(detected){result.visibleGtl=true;result.panel=detected;}
+    }catch{}
     const size=good?result.image.getSize():null;
     const last=records.get(id);
     const record={
-      id,name:last.name,state:good?'ok':result.unsupported?'unsupported':'error',
+      id,name:last.name,state:good?'ok':result.waiting?'waiting':result.unsupported?'unsupported':'error',
       code:result.code||'CAP-UNKNOWN',detail:String(result.detail||'').slice(0,180),
       ms:Math.round(elapsed),frames:good?1:0,
       gtl:good&&(result.visibleGtl===true||(result.visibleGtl!==false&&!!h.gtl)),score:h.score||0,
@@ -61,13 +65,17 @@ function createGameCapture({desktopCapturer,screen,locateWindow,inspectThumbnail
       catch(e){return fail('EW-ERROR',String(e.message||e));}
       const names=sources.filter(s=>TITLE.test(String(s.name||'')));
       for(const source of names){
-        if(health(source.thumbnail).valid)
-          return {image:source.thumbnail,rect:null,via:id,code:'EW-OK',
-            detail:'Ventana PokeMMO captada ('+names.length+' coincidencias)'};
+        if(!health(source.thumbnail).valid)continue;
+        // Coordinates are required to anchor an overlay to a window thumbnail.
+        let rect=null;
+        try{rect=await locateWindow();}catch{}
+        if(!validRect(rect))continue;
+        return {image:source.thumbnail,rect,via:id,code:'EW-OK',
+          detail:'Ventana PokéMMO captada y localizada ('+names.length+' coincidencias)'};
       }
-      return fail(names.length?'EW-BLANK':'EW-NOT-FOUND',names.length?
-        'Se encontró la ventana, pero devolvió imagen vacía':
-        'Electron enumeró '+sources.length+' ventanas sin PokeMMO');
+      return fail(names.length?'EW-NO-RECT':'EW-NOT-FOUND',names.length?
+        'Ventana detectada sin imagen o posición confirmada; usando pantalla':
+        'Electron enumeró '+sources.length+' ventanas sin PokéMMO');
     }
     if(id==='electron-win32'){
       let rect;
@@ -181,12 +189,16 @@ function createGameCapture({desktopCapturer,screen,locateWindow,inspectThumbnail
     if(busy)return fail('CAP-PROBING','Pruebas de motores en curso');
     // The expensive PowerShell engines run only after a confirmed manual probe.
     // Visual monitor scanning works independently of the PokeMMO window title.
-    const fast=['electron-window','electron-visual','electron-win32'];
-    const tries=selected?[selected,...fast.filter(id=>id!==selected)]:fast;
+    const fast=['electron-visual','electron-window','electron-win32'];
+    // GDI captures independently of Electron/title; PrintWindow is last
+    // because some GPU renderers return an empty frame.
+    const backup=['win-gdi','win-print'];
+    const tries=selected?[selected,...fast.filter(id=>id!==selected),
+      ...backup.filter(id=>id!==selected)]:[...fast,...backup];
     let errors=[];
     for(const id of tries){
-      const delay=id==='win-gdi'||id==='win-print'?20000:
-        id==='electron-win32'?8000:2500;
+      const delay=id==='win-gdi'||id==='win-print'?30000:
+        id==='electron-win32'?5000:1500;
       if(now()<(cooldown.get(id)||0)&&selected!==id)continue;
       const attempt=await one(id,active);
       if(attempt.result.image){

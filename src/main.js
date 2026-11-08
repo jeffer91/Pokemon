@@ -68,7 +68,7 @@ async function showCompact(label='Radar'){
   broadcast('radar:overlay',{mode:'compact',label});
   const bounds=overlay.getBounds();
   if(!overlay.isVisible() || bounds.width!==110 || bounds.height!==32)place(compactFallback());
-  const game=captureAgent?.getGameRect() || await locateWindow() || screen.getPrimaryDisplay().workArea;
+  const game=captureAgent?.getGameRect() || screen.getPrimaryDisplay().workArea;
   if(!sessionActive||version!==sessionVersion||!game)return;
   const work=screen.getDisplayMatching(game).workArea;
   const width=110,height=32;
@@ -79,7 +79,7 @@ async function showCompact(label='Radar'){
 async function showResults(rows,version,layout=null){
   if(!sessionActive||sessionVersion!==version||!overlay||overlay.isDestroyed())return;
   if(!rows.length)return; // Keep the last page visible during a transient OCR failure.
-  const game=captureAgent?.getGameRect() || await locateWindow() || screen.getPrimaryDisplay().workArea;
+  const game=captureAgent?.getGameRect() || screen.getPrimaryDisplay().workArea;
   if(!sessionActive||sessionVersion!==version)return;
   if(!game)return showCompact();
   const scale=1; // Automatic positioning; previous manually stored offsets are ignored.
@@ -177,6 +177,7 @@ async function tick(){
   try{
     const capture=await getGameSource(mode==='gtl');
     if(!sessionActive||version!==sessionVersion)return;
+    diagnostics?.setEngines(captureAgent.snapshot());
     if(!capture?.image){
       mode='idle';headerHash='';tableHash='';lastTableCheckedAt=0;
       const waiting=!!capture?.waiting;
@@ -234,6 +235,7 @@ async function tick(){
     if(!sessionActive||version!==sessionVersion)return;
     if(!visibleGtl){
       mode='idle';tableHash='';lastTableCheckedAt=0;lastDisplayedRows=null;lastPageSignature='';lastMarketImage=null;
+      diagnostics?.setOcrRows([]);
       track('gtl','pending','GTL-OCULTO','Pantalla captada; GTL no visible');
       track('ocr','pending','OCR-000','Esperando anuncios');
       setStatus({state:'capturada',message:'Pantalla captada · esperando GTL',recognized:0});
@@ -281,11 +283,15 @@ async function tick(){
     setStatus({state:'leyendo',message:'GTL detectado · leyendo anuncios...',recognized:0});
     if(!sessionActive||version!==sessionVersion)return;
     // Balance is read from a separate small crop; GTL OCR excludes the top-left.
-    if(now-lastBalanceReadAt>10000||storage.latestBalance()===null){
+    if(now-lastBalanceReadAt>(storage.latestBalance()===null?5000:10000)){
       const balanceRect=region(size.width,size.height,'balance');
-      const balance=await recognizer.readBalance(image.crop(balanceRect).toPNG());
+      const balanceCrop=image.crop(balanceRect);
+      const scaledBalance=balanceCrop.resize({
+        width:Math.max(480,balanceCrop.getSize().width*2),quality:'best'});
+      const balance=await recognizer.readBalance(scaledBalance.toPNG());
       lastBalanceReadAt=now;
       if(Number.isSafeInteger(balance))storage.recordBalance(balance);
+      diagnostics?.setBalance(balance,'HUD OCR ampliado');
     }
     const ocrStart=performance.now();
     const res=await recognizer.analyze(market,rect.width,rect.height,{
@@ -297,6 +303,7 @@ async function tick(){
     if(!sessionActive||version!==sessionVersion)return;
     const ocrTime=Math.round(performance.now()-ocrStart);
     if(res.advanced){
+      diagnostics?.setOcrRows([]);
       track('ocr','pending','OCR-FILTROS','Búsqueda avanzada abierta',ocrTime);
       setStatus({state:'investigando',message:'GTL detectado · ajustando filtros',recognized:0,latency:ocrTime});
       await showCompact('Filtros GTL');return;
@@ -309,10 +316,14 @@ async function tick(){
     };
     const rows=(res.rows||[]).map(enrichSex);
     const partials=(res.partialRows||[]).map(enrichSex);
+    diagnostics?.setOcrRows(res.diagnosticRows||[]);
+    broadcast('radar:diagnostics',diagnostics?.snapshot());
     const balance=storage.latestBalance();
     emptyReads=rows.length?0:emptyReads+1;
-    track('ocr',rows.length?'ok':emptyReads>=3?'error':'warn',rows.length?'OCR-OK':'OCR-001',
-      rows.length+'/10 completos; '+partials.length+' parciales; '+(res.wordCount||0)+' palabras',ocrTime);
+    track('ocr',rows.length===10?'ok':emptyReads>=3?'error':'warn',
+      rows.length===10?'OCR-OK':rows.length?'OCR-PARCIAL':'OCR-001',
+      rows.length+'/10 completos; '+partials.length+' parciales; '+(res.wordCount||0)+
+      ' palabras · detalle por fila en Diagnóstico',ocrTime);
     stage='engine';
     const decisions=[];
     const profiles=profileList(storage.settings().teamOverrides);
@@ -344,7 +355,8 @@ async function tick(){
     }
     const actionable=decisions.filter(d=>d.decision!=='SILENCIO').length;
     track('engine',balance===null?'warn':'ok',balance===null?'ECO-001':'ECO-OK',
-      balance===null?'Saldo no reconocido':'Evaluadas '+rows.length+' ofertas; '+actionable+' decisiones');
+      balance===null?'Saldo no reconocido; puntuación IV disponible':
+        'Evaluadas '+rows.length+' ofertas; '+actionable+' decisiones');
     stage='database';
     const context=(res.context||'general')+'|'+(res.sort||'unknown');
     const saved=storage.recordMarketScan({

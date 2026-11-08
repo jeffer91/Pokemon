@@ -1,6 +1,6 @@
 {
   "name": "pokeradar-gtl",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "PokéRadar: radar GTL, catálogo competitivo por lotes y sugerencias basadas en SQLite",
   "private": true,
   "main": "src/main.js",

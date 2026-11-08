@@ -113,7 +113,7 @@ test('selected capture engine is reused without continuously launching all engin
       if(opts.types[0]==='window'){windowCalls++;return [{name:'PokeMMO',thumbnail:image()}];}
       return [];
     }},
-    screen:{getAllDisplays:()=>[]},locateWindow:async()=>null,
+    screen:{getAllDisplays:()=>[]},locateWindow:async()=>rect,
     inspectThumbnail:inspect,nativeCapture:async()=>{nativeCalls++;return {image:image(),code:'NATIVE-OK'};}
   });
   const result=await api.probeAll();

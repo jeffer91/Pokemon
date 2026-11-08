@@ -13,7 +13,7 @@ function normalizedNature(value){
 function validPrice(n) { return Number.isSafeInteger(n) && n > 0 && n <= 2_000_000_000; }
 function validIvs(ivs) { return Array.isArray(ivs) && ivs.length === 6 && ivs.every(n => Number.isInteger(n) && n >= 0 && n <= 31); }
 function validListing(p) {
-  return !!p && typeof p.species === 'string' && /^[\p{L}\p{M}.'’\-\s]{2,40}$/u.test(p.species) &&
+  return !!p && typeof p.species === 'string' && /^[\p{L}\p{M}.'’\-\s♂♀]{2,40}$/u.test(p.species) &&
     Number.isInteger(p.level) && p.level >= 1 && p.level <= 100 &&
     typeof p.nature === 'string' && NATURES.has(normalizedNature(p.nature)) &&
     validIvs(p.ivs) && validPrice(p.price);

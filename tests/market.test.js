@@ -80,3 +80,8 @@ test('un sexo desconocido no genera recomendaciones positivas de reventa',()=>{
 test('rechaza naturalezas inexistentes aunque tengan precios e IV válidos',()=>{
   assert.equal(validListing(pokemon(20000,{nature:'inventada'})),false);
 });
+
+test('acepta el nombre Nidoran♂ sin confundir el sexo con letras normales',()=>{
+  assert.equal(validListing(pokemon(10000,{species:'Nidoran♂',nature:'firme'})),true);
+  assert.equal(validListing(pokemon(10000,{species:'Nidoran♀',nature:'firme'})),true);
+});

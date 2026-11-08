@@ -164,3 +164,37 @@ test('alineación: OCR sin el botón de la primera fila conserva el rango 1',()=
   assert.equal(result.rows[9].rank,10);
   assert.ok(Math.abs(result.grid.top-.18)<.005);
 });
+
+test('saldo OCR admite el símbolo omitido y miles legibles en el recorte del HUD',()=>{
+  const {parseBalanceText}=require('../src/recognition');
+  assert.equal(parseBalanceText('Ciudad Porcelana\nJue 00:00\n$38,096'),38096);
+  assert.equal(parseBalanceText('38.096'),38096);
+  assert.equal(parseBalanceText('S 38,096'),38096);
+  assert.equal(parseBalanceText('Jue 00:00\nSIN SALDO'),null);
+});
+test('diagnóstico OCR dice qué campo falta en cada una de las diez filas',()=>{
+  const panel={x:345,y:130,width:1015,height:690};
+  const crop={x:345,y:130+Math.round(.132*1015),width:1015,
+    height:Math.round(.48*1015),fullWidth:1709,fullHeight:929};
+  const words=[];
+  function w(text,x,y,conf=95){
+    const px=panel.x+x*panel.width-crop.x;
+    const py=panel.y+y*panel.width-crop.y;
+    words.push({text:String(text),confidence:conf,
+      bbox:{x0:px-4,x1:px+4,y0:py-4,y1:py+4}});
+  }
+  const name='Nidoran♂';
+  for(let i=0;i<10;i++){
+    const y=.18+i*.042;
+    w('Nv.',.102,y);w(1+i,.134,y);w(i===0?name:'Ditto',.203,y);
+    w(i===2?'ilegible':'firme',.315,y);
+    [31,12,14,18,20,31].forEach((v,j)=>w(v,.372+j*.0335,y));
+    w('$10.000',.594,y);w('Comprar',.925,y);
+  }
+  const result=parseScreen({words},crop.width,crop.height,{gtlConfirmed:true,panel,crop});
+  assert.equal(result.diagnosticRows.length,10);
+  assert.equal(result.diagnosticRows[0].species,name);
+  assert.equal(result.rows.length,9);
+  assert.equal(result.partialRows.length,1);
+  assert.ok(result.diagnosticRows[2].missingFields.includes('NATURALEZA'));
+});

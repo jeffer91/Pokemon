@@ -6,6 +6,17 @@ const NATURES=new Set(('fuerte hurana audaz firme picara osada docil placida agi
 
 
 function normalized(s='') {return String(s).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();}
+function parseBalanceText(text){
+  const str=String(text||'');
+  // OCR frequently omits the currency symbol; accept a thousands-grouped
+  // amount only from the isolated, top-left balance region.
+  const explicit=str.match(/(?:[$＄]|(?<![\p{L}\p{N}])[Ss])\s*([0-9]{1,3}(?:[.,][0-9]{3})+|[0-9]{4,9})/u);
+  if(explicit)return parseMoney(explicit[1]);
+  const grouped=str.match(/\b([0-9]{1,3}(?:[.,][0-9]{3})+)\b/);
+  if(grouped)return parseMoney(grouped[1]);
+  const lone=str.match(/(?:^|\n)\s*([0-9]{4,9})\s*(?:\n|$)/);
+  return lone?parseMoney(lone[1]):null;
+}
 function parseMoney(s) {
   const t=String(s).replace(/[^\d.,]/g,'');
   if(!t) return null;
@@ -121,41 +132,57 @@ function parseScreen(data,width,height,options={}) {
     if(row.length<3)continue;
     const nameWords=fieldWords(row,...cfg.name,0,1);
     const rawName=join(nameWords);
-    const match=rawName.match(/^(?:Nv[.,:]?\s*)?(\d{1,3})\s*(\p{L}[\p{L}\p{M}.'’\-\s]*)/iu);
+    const match=rawName.match(/^(?:N[vw][.,:]?\s*)?(\d{1,3})\s*([\p{L}\p{M}][\p{L}\p{M}.'’\-\s♂♀]*)/iu);
     const level=match?Number(match[1]):null;
-    const species=match?cleanupName(match[2].replace(/[^\p{L}\p{M}.'’\-\s]/gu,'')):null;
+    const species=match?cleanupName(match[2].replace(/[^\p{L}\p{M}.'’\-\s♂♀]/gu,'')):null;
     const natureWords=fieldWords(row,...cfg.nature,0,1);
     const nature=normalized(join(natureWords)).replace(/[^\p{L}\s]/gu,'').trim();
     const priceWords=fieldWords(row,...cfg.price,0,1);
     const rawPrice=join(priceWords);
     const price=parseMoney(rawPrice);
-    const priceReliable=!!price&&priceWords.length>0&&priceWords.every(w=>w.conf>=70);
+    const priceReliable=!!price&&priceWords.length>0&&priceWords.every(w=>w.conf>=60);
     const ivs=[];
     for(let j=0;j<6;j++){
       const x=cfg.ivStart+j*cfg.ivStep;
       const col=fieldWords(row,x,x+cfg.ivWidth,0,1);
       const str=join(col).replace(/[^\d]/g,'');
-      const v=/^\d{1,2}$/.test(str)&&col.length>0&&col.every(w=>w.conf>=65)?Number(str):null;
+      const v=/^\d{1,2}$/.test(str)&&col.length>0&&col.every(w=>w.conf>=55)?Number(str):null;
       ivs.push(v!==null&&v<=31?v:null);
     }
     const genderRaw=join(fieldWords(row,...cfg.sex,0,1));
     const sex=/♀/.test(genderRaw)?'F':/♂/.test(genderRaw)?'M':'?';
     const age=join(fieldWords(row,...cfg.age,0,1));
     const entry={species,level,nature,sex,price,ivs,age,rank:i+1};
-    const nameReliable=nameWords.some(w=>w.conf>=70&&/\p{L}{3,}/u.test(w.text));
-    const natureReliable=natureWords.length>0&&natureWords.every(w=>w.conf>=65)&&NATURES.has(nature);
-    const accepted=validListing(entry)&&priceReliable&&nameReliable&&natureReliable;
+    const nameReliable=!!match&&nameWords.some(w=>w.conf>=55&&/\p{L}{3,}/u.test(w.text));
+    const natureReliable=natureWords.length>0&&natureWords.every(w=>w.conf>=55)&&NATURES.has(nature);
+    const missingFields=[
+      ...(!species||!nameReliable?['ESPECIE']:[]),
+      ...(!Number.isInteger(level)||level<1||level>100?['NIVEL']:[]),
+      ...(!natureReliable?['NATURALEZA']:[]),
+      ...(!priceReliable?['PRECIO']:[]),
+      ...ivs.flatMap((v,k)=>v===null?['IV_'+['PS','ATAQUE','DEFENSA','ATAQUE_ESP','DEFENSA_ESP','VELOCIDAD'][k]]:[])
+    ];
+    const accepted=missingFields.length===0&&validListing(entry);
     if(accepted)rows.push({...entry,ocrReliable:true});
     else if(species||price||ivs.some(v=>v!==null))
       partialRows.push({...entry,priceReliable,
-        missing:!species||!nameReliable?'ESPECIE':!Number.isInteger(level)?'NIVEL':
-          !natureReliable?'NATURALEZA':!priceReliable?'PRECIO_NO_FIABLE':'IV_INCOMPLETOS'});
+        missing:missingFields[0]||'VALIDACION',
+        missingFields:missingFields.length?missingFields:['VALIDACION']});
   }
   const layout=isPanel?{
     kind:'panel',panel,frameWidth:rect.fullWidth,frameHeight:rect.fullHeight,
     firstRowUnits:grid.top,stepUnits:grid.step,rightUnits:1.015
   }:overlayLayout(words);
-  return {...base,rows,partialRows,grid,layout};
+  const byRank=new Map([...rows,...partialRows].map(r=>[r.rank,r]));
+  const diagnosticRows=Array.from({length:10},(_,i)=>{
+    const r=byRank.get(i+1);
+    return {rank:i+1,species:r?.species||'—',level:r?.level??null,
+      nature:r?.nature||null,price:r?.price??null,
+      ivs:r?.ivs||Array(6).fill(null),
+      state:r?.ocrReliable?'complete':r?'partial':'missing',
+      missingFields:r?.ocrReliable?[]:r?.missingFields||['FILA_SIN_TEXTO']};
+  });
+  return {...base,rows,partialRows,diagnosticRows,grid,layout};
 }
 function panelRowGrid(words) {
   const buys=words.filter(w=>normalized(w.text)==='comprar'&&w.x>.85&&w.x<1.01&&w.y>.13&&w.y<.65)
@@ -190,11 +217,10 @@ async function createRecognizer(){
     return isGtlHeader(result.data.text||'');
   },async readBalance(image){
     const result=await worker.recognize(image);
-    const found=String(result.data.text||'').match(/\$\s*([0-9][0-9.,]*)/);
-    return found?parseMoney(found[1]):null;
+    return parseBalanceText(result.data.text);
   },async analyze(image,width,height,options={}) {
     const result=await worker.recognize(image,{}, {blocks:true,text:true});
     return parseScreen(result.data,width,height,options);
   },close:()=>worker.terminate()};
 }
-module.exports={parseScreen,parseMoney,flattenWords,cleanWords,createRecognizer,normalized,overlayLayout,isGtlHeader};
+module.exports={parseScreen,parseMoney,parseBalanceText,flattenWords,cleanWords,createRecognizer,normalized,overlayLayout,isGtlHeader};

@@ -21,7 +21,7 @@ public static class RadarWindow {
     EnumWindows((hwnd,arg)=> {
       if (!IsWindowVisible(hwnd)) return true;
       StringBuilder b=new StringBuilder(256); GetWindowText(hwnd,b,b.Capacity);
-      if (b.ToString().IndexOf("PokeMMO",StringComparison.OrdinalIgnoreCase)<0) return true;
+      if (b.ToString().IndexOf("PokeMMO",StringComparison.OrdinalIgnoreCase)<0 && b.ToString().IndexOf("PokéMMO",StringComparison.OrdinalIgnoreCase)<0) return true;
       RECT r; POINT p=new POINT {X=0,Y=0};
       if(!GetClientRect(hwnd,out r) || !ClientToScreen(hwnd,ref p))return true;
       int w=r.Right-r.Left, h=r.Bottom-r.Top;
@@ -58,6 +58,7 @@ module.exports={locateWindow,captureNative};
 const nativeScript=String.raw`
 $ErrorActionPreference='Stop'
 Add-Type -AssemblyName System.Drawing
+Add-Type -AssemblyName System.Windows.Forms
 Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
@@ -78,7 +79,7 @@ public static class RadarNative {
     EnumWindows((h,p)=>{
       if(!IsWindowVisible(h))return true;
       var b=new StringBuilder(256);GetWindowText(h,b,b.Capacity);
-      if(b.ToString().IndexOf("PokeMMO",StringComparison.OrdinalIgnoreCase)<0)return true;
+      if(b.ToString().IndexOf("PokeMMO",StringComparison.OrdinalIgnoreCase)<0 && b.ToString().IndexOf("PokéMMO",StringComparison.OrdinalIgnoreCase)<0)return true;
       RECT r;POINT v=new POINT{X=0,Y=0};
       if(!GetClientRect(h,out r)||!ClientToScreen(h,ref v))return true;
       if(r.Right-r.Left<400||r.Bottom-r.Top<300)return true;
@@ -92,13 +93,22 @@ try {
   $r=[RadarNative+RECT]::new()
   $pt=[RadarNative+POINT]::new()
   $hwnd=[RadarNative]::Find([ref]$r,[ref]$pt)
-  if($hwnd -eq [IntPtr]::Zero){Write-Output 'ERR|NATIVE-NOT-FOUND|PokeMMO no localizado';exit 0}
-  $w=$r.Right-$r.Left;$h=$r.Bottom-$r.Top
+  if('MODE' -eq 'copy'){
+    # An independent GDI full-screen capture; no game window title or HWND needed.
+    $bounds=[System.Windows.Forms.SystemInformation]::VirtualScreen
+    $x=$bounds.X;$y=$bounds.Y;$w=$bounds.Width;$h=$bounds.Height
+  } else {
+    if($hwnd -eq [IntPtr]::Zero){Write-Output 'ERR|NATIVE-NOT-FOUND|PokéMMO no localizado';exit 0}
+    $x=$pt.X;$y=$pt.Y;$w=$r.Right-$r.Left;$h=$r.Bottom-$r.Top
+  }
+  if($w -lt 400 -or $h -lt 300 -or ([long]$w*$h) -gt 16000000){
+    Write-Output 'ERR|NATIVE-BOUNDS|Dimensiones no compatibles';exit 0
+  }
   $bmp=[System.Drawing.Bitmap]::new($w,$h)
   $g=[System.Drawing.Graphics]::FromImage($bmp)
   try {
     if('MODE' -eq 'copy'){
-      $g.CopyFromScreen($pt.X,$pt.Y,0,0,([System.Drawing.Size]::new($w,$h)))
+      $g.CopyFromScreen($x,$y,0,0,([System.Drawing.Size]::new($w,$h)))
     } else {
       $dc=$g.GetHdc()
       try{$ok=[RadarNative]::PrintWindow($hwnd,$dc,3)}finally{$g.ReleaseHdc($dc)}
@@ -107,7 +117,7 @@ try {
     $ms=New-Object System.IO.MemoryStream
     try{
       $bmp.Save($ms,[System.Drawing.Imaging.ImageFormat]::Png)
-      Write-Output ('OK|'+$pt.X+','+$pt.Y+','+$w+','+$h+'|'+[Convert]::ToBase64String($ms.ToArray()))
+      Write-Output ('OK|'+$x+','+$y+','+$w+','+$h+'|'+[Convert]::ToBase64String($ms.ToArray()))
     }finally{$ms.Dispose()}
   }finally{$g.Dispose();$bmp.Dispose()}
 }catch{
