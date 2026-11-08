@@ -54,3 +54,13 @@ test('the last page of the search ends the mission even below the goal',()=>{
   assert.equal(learner.observe(lastPage,{pageInfo:{from:21,to:22,total:22,last:true}}),true);
   assert.notEqual(learner.view().species,'Gible');
 });
+
+test('missions within your budget come first',()=>{
+  // Garchomp ads seen at 145.000+: with ~32.700 to spend it moves to the back.
+  const store={garchomp:[{species:'Garchomp',level:58,nature:'alegre',price:145000,ivs:[17,31,19,9,17,31],fingerprint:'g'}]};
+  const learner=createLearner({profiles:PRIORITY_PROFILES,samplesFor:s=>store[s.toLowerCase()]||[],budget:()=>32700});
+  assert.notEqual(learner.view().species,'Garchomp');
+  assert.equal(learner.view().affordable,true);
+  const rich=createLearner({profiles:PRIORITY_PROFILES,samplesFor:s=>store[s.toLowerCase()]||[],budget:()=>500000});
+  assert.equal(rich.view().species,'Garchomp');
+});

@@ -1,7 +1,7 @@
 'use strict';
 
 // Deterministic, auditable rules. Never infer a confirmed sale from a disappeared ad.
-const RESERVE_RATIO = 0.30;
+const RESERVE_RATIO = 0.15; // the player chose a 15 % reserve (v0.14)
 const MAX_SAMPLE_AGE_DAYS = 7;
 const MIN_COMPARABLES = 5;
 const FAST_WINDOW_HOURS = 24;

@@ -307,7 +307,7 @@ function openDatabase(folder) {
   }
   // Every well-formed OCR listing of the species (verified or not) for the
   // class-based resale estimate. Each fingerprint is one distinct ad.
-  const samplesQuery=db.prepare(`SELECT fingerprint,species,level,nature,sex,price,ivs_json,last_seen,verified
+  const samplesQuery=db.prepare(`SELECT fingerprint,species,level,nature,sex,price,ivs_json,first_seen,last_seen,verified
     FROM listings WHERE species=? COLLATE NOCASE AND last_seen>=? ORDER BY last_seen DESC LIMIT 600`);
   // Every recent ad (species, IVs, price) to learn how price grows per 31.
   const recentPricesQuery=db.prepare(`SELECT species,ivs_json,price FROM listings WHERE last_seen>=? ORDER BY last_seen DESC LIMIT 8000`);
@@ -316,7 +316,7 @@ function openDatabase(folder) {
   }
   function marketSamples(species,now=Date.now()){
     return samplesQuery.all(String(species||''),now-7*86_400_000)
-      .map(r=>({...r,ivs:JSON.parse(r.ivs_json),lastSeen:r.last_seen}));
+      .map(r=>({...r,ivs:JSON.parse(r.ivs_json),lastSeen:r.last_seen,firstSeen:r.first_seen}));
   }
   const recentDecision=db.prepare(`SELECT timestamp FROM recommendations
     WHERE fingerprint=? AND decision=? AND reason=? ORDER BY id DESC LIMIT 1`);

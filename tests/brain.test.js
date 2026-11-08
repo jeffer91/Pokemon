@@ -112,3 +112,33 @@ test('a base form is priced from its evolution when it has no data of its own',(
   assert.ok(r.resale>=10000&&r.resale<=14000,'≈45 % of Chandelure');
   assert.equal(r.decision,'COMPRAR');
 });
+
+test('absurd asking prices never create a fake bargain (real Sneasel data)',()=>{
+  const sn=(price,nature,ivs,f)=>({species:'Sneasel',level:30,nature,sex:'M',price,ivs,lastSeen:now-1000,fingerprint:f});
+  const peers=[sn(3000,'timida',[31,14,12,28,27,14],'a'),sn(150000,'serena',[31,9,26,25,1,1],'b'),
+    sn(150000,'osada',[14,31,26,18,22,15],'c'),sn(160000,'serena',[23,23,31,23,27,20],'d')];
+  const r=assess(sn(2500,'firme',[2,16,31,6,30,29],'x'),peers,opts);
+  assert.equal(r.decision,'NO_COMPRAR');
+  assert.equal(r.reason,'SIN_VALOR');
+});
+
+test('resale is set by undercutting the cheapest competitor',()=>{
+  const peers=[22000,24000,25000,90000].map((p,i)=>gible(p,undefined,{fingerprint:'u'+i}));
+  const r=assess(gible(9000),peers,opts);
+  assert.equal(r.resale,Math.floor(22000*.99));
+  // Someone already sells at 9.500: buying at 9.000 is no bargain (real case:
+  // Ditto 2×31 at 16.999 while another one sits at 21.111).
+  const crowded=[9500,30000,32000,34000].map((p,i)=>gible(p,undefined,{fingerprint:'v'+i}));
+  assert.notEqual(assess(gible(9000),crowded,opts).decision,'COMPRAR');
+});
+
+test('an ad that sat unsold for days competes but is not evidence of value',()=>{
+  const day=86_400_000;
+  const old=(p,f)=>gible(p,undefined,{fingerprint:f,firstSeen:now-5*day,lastSeen:now-1000});
+  // A cheap stale ad is still competition: no fake profit above it.
+  const peers=[30000,32000,34000].map((p,i)=>gible(p,undefined,{fingerprint:'w'+i}));
+  assert.equal(assess(gible(9000),[...peers,old(12000,'o')],opts).resale,Math.floor(12000*.99));
+  // Only stale expensive ads: not enough evidence of what sells.
+  const r=assess(gible(9000),[old(40000,'a'),old(42000,'b'),old(44000,'c')],opts);
+  assert.equal(r.reason,'MUESTRA_INSUFICIENTE');
+});

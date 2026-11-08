@@ -1,4 +1,4 @@
-# PokéRadar GTL — v0.13.0
+# PokéRadar GTL — v0.14.0
 
 Aplicación de escritorio Electron para Windows 11. **Play** inicia una sesión de lectura visual del GTL, sin formularios de cuota ni posiciones X/Y, y muestra un pequeño radar flotante. No realiza compras ni controla el cliente del juego.
 
@@ -38,7 +38,7 @@ Por precaución, la versión 0.2.1 **estima una cuota de 5 % del precio de reven
 
 ## Fiabilidad y límites
 
-La reserva de saldo es del **30 %**. SQLite conserva anuncios e historial con WAL y comprobación de integridad; las capturas no se almacenan. Las recomendaciones anteriores se ocultan al cambiar la pantalla.
+La reserva de saldo es del **15 %** (desde v0.14). SQLite conserva anuncios e historial con WAL y comprobación de integridad; las capturas no se almacenan. Las recomendaciones anteriores se ocultan al cambiar la pantalla.
 
 **Todavía no se ha probado esta actualización con PokéMMO ejecutándose en tu Windows 11.** El reconocimiento por OCR puede superar el objetivo de un segundo y el impacto sobre FPS requiere medición real. El posicionamiento automático está basado en reconocimiento de botones y un respaldo proporcional, por lo que puede necesitar calibración si cambias la interfaz.
 
@@ -305,3 +305,13 @@ Nota: la alineación de las etiquetas flotantes depende de la geometría detecta
 **La basura se descarta al instante.** Pokémon con un 31 útil o ninguno y lejos de cualquier ideal salen «NO COMPRAR · Sin valor de reventa», sin esperar precios.
 
 **El nivel ya no cuenta.** Ni en las clases del cerebro ni en las misiones (las formas base se buscan de cualquier nivel), ni en la verificación de filtros. En el GTL el nivel casi no mueve el precio: Garchomp Nv. 51 y Nv. 100 a 190.000.
+
+## v0.14.0 — Precios de reventa honestos y reserva del 15 %
+
+Revisado con la base real del jugador (558 anuncios, 183 especies): el 60 % estaba fuera de presupuesto y varias «gangas» eran falsas por precios pedidos absurdos (Sneasel 1×31 pedido en 150.000 que nadie compra).
+
+- **Reserva de saldo: 15 %** (antes 30 %). Con 38.516 se pueden gastar ~32.700.
+- **Reventa = 1 % por debajo del competidor más barato** de la misma clase (antes, percentil 25 de lo pedido). Si alguien ya vende un Ditto 2×31 a 21.111, el tuyo no se revende a 54.000. Puede perder alguna oportunidad, no dinero.
+- **La basura siempre es basura** aunque otros pidan mucho por ella; solo tus ventas reales de esa clase pueden demostrar lo contrario.
+- **Anuncios viejos (3+ días a la vista):** siguen contando como competencia, pero no como prueba de valor; si toda la evidencia es vieja, no hay estimación.
+- **Aprender prioriza misiones dentro de tu presupuesto**: las clases cuyo anuncio más barato visto supera tu límite pasan al final.

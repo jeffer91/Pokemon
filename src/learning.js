@@ -109,7 +109,7 @@ function progressOf(m,samples,extra=new Set()){
   return Math.min(GOAL,keys.size);
 }
 
-function createLearner({profiles,samplesFor,skipped=[]}={}){
+function createLearner({profiles,samplesFor,skipped=[],budget=()=>null}={}){
   const missions=buildMissions(profiles);
   const skip=new Set(skipped);
   const exhausted=new Set();
@@ -123,8 +123,17 @@ function createLearner({profiles,samplesFor,skipped=[]}={}){
   };
   const progress=m=>progressOf(m,samples(m.species),seen.get(m.id));
   const finished=m=>progress(m)>=GOAL||exhausted.has(m.id);
+  // Missions you can actually buy from go first: the cheapest ad already seen
+  // for the mission must fit the budget (unknown price = still worth learning).
+  function affordable(m){
+    const limit=budget();
+    if(!Number.isFinite(limit))return true;
+    const prices=samples(m.species).filter(r=>matchesMission(r,m)).map(r=>r.price);
+    return !prices.length||Math.min(...prices)<=limit;
+  }
   function open(){
-    return missions.filter(m=>!skip.has(m.id)&&!finished(m)).sort((a,b)=>a.priority-b.priority);
+    return missions.filter(m=>!skip.has(m.id)&&!finished(m))
+      .map(m=>({m,rank:(affordable(m)?0:100000)+m.priority})).sort((a,b)=>a.rank-b.rank).map(x=>x.m);
   }
   function pick(){current=open()[0]||null;filterValues=null;return current;}
   function view(){
@@ -132,7 +141,7 @@ function createLearner({profiles,samplesFor,skipped=[]}={}){
     if(!current)return {done:true,total:missions.length,completed};
     return {done:false,id:current.id,species:current.species,nature:current.nature,
       filters:current.filters,sort:current.sort,target:current.target,level1:current.level1,
-      got:progress(current),goal:GOAL,completed,total:missions.length,
+      got:progress(current),goal:GOAL,completed,total:missions.length,affordable:affordable(current),
       filterCheck:checkFilters(filterValues,current),
       text:'Busca '+current.species+(current.level1?' (nivel 1)':'')+' · '+current.filters.join(' · ')};
   }

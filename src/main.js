@@ -689,7 +689,7 @@ async function startSession(kind='hunt'){
   kind=kind==='learn'?'learn':'hunt';
   if(kind==='learn'){
     learner=createLearner({profiles:PRIORITY_PROFILES,samplesFor:s=>storage.marketSamples(s),
-      skipped:storage.settings().learnSkipped||[]});
+      skipped:storage.settings().learnSkipped||[],budget:()=>availableToSpend(storage.latestBalance())});
     try{globalShortcut.unregister(NEXT_KEY);globalShortcut.register(NEXT_KEY,()=>nextMission());}catch{}
   }else{learner=null;try{globalShortcut.unregister(NEXT_KEY);}catch{}}
   const switching=sessionActive&&kind!==sessionKind;

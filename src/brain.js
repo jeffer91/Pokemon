@@ -109,9 +109,15 @@ const TIERS={
   species:{label:'estimado por especie',confidence:.6,minNet:5000,minDiscount:.4},
   line:{label:'estimado por su evolución',confidence:.45,minNet:5000,minDiscount:.4}
 };
-const LINE_FACTOR=.45; // a base form usually sells well below its final form
+const LINE_FACTOR=.45;
+const STALE_MS=3*86_400_000; // a base form usually sells well below its final form
 function scaled(list,t,m,factor=1){
   return list.map(s=>Math.round(s.price*m[Math.min(6,t)]/m[Math.min(6,count31(s.ivs))]*factor));
+}
+function undercut(prices){
+  const sorted=[...prices].filter(Number.isFinite).sort((a,b)=>a-b);
+  if(!sorted.length)return 0;
+  return Math.floor(sorted[0]*.99);
 }
 function cleanPool(samples,listing,cutoff){
   const unique=new Map();
@@ -119,7 +125,9 @@ function cleanPool(samples,listing,cutoff){
     if(!validListing(s)||!(s.lastSeen>=cutoff))continue;
     const id=s.fingerprint||[s.species,s.level,s.nature,s.sex,s.price,...s.ivs].join('|');
     if(listing.fingerprint&&id===listing.fingerprint)continue;
-    if(!unique.has(id))unique.set(id,s);
+    // Listed for 3+ days = it does NOT sell at that price. It still competes
+    // (buyers see it) but it is not evidence of value.
+    if(!unique.has(id))unique.set(id,{...s,stale:Number.isFinite(s.firstSeen)&&s.lastSeen-s.firstSeen>=STALE_MS});
   }
   return [...unique.values()];
 }
@@ -144,24 +152,30 @@ function assess(listing,samples=[],{profiles=[],balance=null,fee=null,pendingSpe
   const pool=cleanPool(samples,listing,cutoff).map(s=>({s,k:classKeys(s,profiles)}));
   const exactPeers=pool.filter(x=>x.k.exact===exact).map(x=>x.s);
   const base={scoreKind:'GANGA',quality,ideal:fit.ideal,target,total31:t,feeEstimate:listingFee,spendable};
-  // Junk (≤1 useful 31, far from any ideal) has no resale value: no data needed,
-  // unless its exact class already proves otherwise.
-  if(quality<1.5&&exactPeers.length<MIN_SAMPLES)
+  // Junk (≤1 useful 31, far from any ideal) has no resale value: no data needed.
+  // Junk stays junk even when others ASK a lot for it; only your own real
+  // sales of that class can prove otherwise.
+  const soldSame=(sales||[]).some(x=>Number.isSafeInteger(x.price)&&x.ivs&&classKeys(x,profiles).exact===exact);
+  if(quality<1.5&&!soldSame)
     return {...base,decision:'NO_COMPRAR',reason:'SIN_VALOR',reasonText:'Sin valor de reventa',
       score:quality,confidence:1,comparables:exactPeers.length};
   // Pick the most exact tier that has enough evidence.
   let tierKey=null,estimates=null;
   const sold=(sales||[]).filter(x=>Number.isSafeInteger(x.price)&&x.ivs&&classKeys(x,profiles).exact===exact).map(x=>x.price);
-  if(exactPeers.length>=MIN_SAMPLES){tierKey='exact';estimates=exactPeers.map(s=>s.price);}
+  const fresh=list=>list.filter(s=>!s.stale).length;
+  if(fresh(exactPeers)>=MIN_SAMPLES){tierKey='exact';estimates=exactPeers.map(s=>s.price);}
   else{
     const loosePeers=pool.filter(x=>x.k.loose===loose).map(x=>x.s);
-    if(loosePeers.length>=MIN_SAMPLES){tierKey='loose';estimates=loosePeers.map(s=>s.price);}
-    else if(pool.length>=MIN_SAMPLES){tierKey='species';estimates=scaled(pool.map(x=>x.s),t,multipliers);}
+    const all=pool.map(x=>x.s);
+    if(fresh(loosePeers)>=MIN_SAMPLES){tierKey='loose';estimates=loosePeers.map(s=>s.price);}
+    else if(fresh(all)>=MIN_SAMPLES){tierKey='species';estimates=scaled(all,t,multipliers);}
     else{
       const finals=cleanPool(lineSamples,listing,cutoff);
-      if(finals.length>=MIN_SAMPLES){tierKey='line';estimates=scaled(finals,t,multipliers,LINE_FACTOR);}
+      if(fresh(finals)>=MIN_SAMPLES){tierKey='line';estimates=scaled(finals,t,multipliers,LINE_FACTOR);}
     }
   }
+  // Cheaper exact competitors always count, even when a rougher tier is used.
+  if(estimates&&exactPeers.length)estimates=[...estimates,...exactPeers.map(s=>s.price)];
   if(!tierKey&&sold.length){tierKey='exact';estimates=sold;}
   if(!tierKey){
     const have=Math.max(pool.length,0);
@@ -170,8 +184,12 @@ function assess(listing,samples=[],{profiles=[],balance=null,fee=null,pendingSpe
     return overBudget?{...out,decision:'NO_COMPRAR',reason:'RESERVA_30_POR_CIENTO',reasonText:'Fuera de tu presupuesto'}:out;
   }
   const T=TIERS[tierKey];
-  // The cheap end of comparable ads is what sells: 25th percentile.
-  const asking=percentile(estimates,.25);
+  // You can only resell by undercutting the competition: 1 % below the
+  // CHEAPEST comparable. Absurd asks (a Sneasel 1×31 for 150.000 that nobody
+  // buys) no longer inflate the estimate, and if someone already sells a Ditto
+  // 2×31 at 21.111 you cannot resell yours at 54.000. Conservative on purpose:
+  // it may miss a deal, it should not lose money.
+  const asking=undercut(estimates);
   const resale=sold.length>=2?percentile(sold,.5):sold.length===1?Math.round((sold[0]+asking)/2):asking;
   const scope=sold.length?'ventas reales ('+sold.length+')':T.label;
   const net=resale-listing.price-listingFee;

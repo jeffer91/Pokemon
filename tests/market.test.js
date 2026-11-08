@@ -19,10 +19,10 @@ test('estima cuota GTL automáticamente y requiere saldo actual',()=>{
   assert.equal(evaluate(pokemon(),[],{}).reason,'SALDO_NO_CONFIRMADO');
   assert.equal(evaluate(pokemon(),[],{balance:100000}).reason,'MUESTRA_INSUFICIENTE');
 });
-test('respeta la reserva del treinta por ciento',()=>{
-  assert.equal(availableToSpend(100000),70000);
-  assert.equal(availableToSpend(100000,10000),60000);
-  assert.equal(evaluate(pokemon(75000),samples([90000,100000]),{balance:100000,listingFee:1000}).reason,'RESERVA_30_POR_CIENTO');
+test('respeta la reserva del quince por ciento',()=>{
+  assert.equal(availableToSpend(100000),85000);
+  assert.equal(availableToSpend(100000,10000),75000);
+  assert.equal(evaluate(pokemon(90000),samples([95000,100000]),{balance:100000,listingFee:1000}).reason,'RESERVA_30_POR_CIENTO');
 });
 test('no recomienda sin suficientes anuncios independientes',()=>{
   const p=pokemon(15000,{fingerprint:'target'});
@@ -65,7 +65,7 @@ test('carga automática permite evaluar sin pedir cuota',()=>{
 });
 
 test('budget exclusion can reject a partially read listing safely',()=>{
-  assert.equal(evaluate({price:75000,ivs:[null]},[],{balance:100000}).reason,'RESERVA_30_POR_CIENTO');
+  assert.equal(evaluate({price:90000,ivs:[null]},[],{balance:100000}).reason,'RESERVA_30_POR_CIENTO');
   assert.equal(evaluate({price:12000,ivs:[null]},[],{balance:100000}).decision,'SILENCIO');
 });
 
