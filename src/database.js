@@ -3,7 +3,7 @@ const { DatabaseSync, backup } = require('node:sqlite');
 const path = require('node:path');
 const fs = require('node:fs');
 const crypto = require('node:crypto');
-const {validListing,researchSuggestions,identity,sexOf,variantOf}=require('./market');
+const {validListing,researchSuggestions,identity,sexOf,variantOf,MARKET_HISTORY_MS}=require('./market');
 const {validateOverrides,priceSummary,matchProfile}=require('./team');
 const {CATALOG,validateCatalog}=require('./catalog');
 const {suggestedSearches}=require('./research');
@@ -340,7 +340,7 @@ function openDatabase(folder) {
     AND sex!='?' AND variant!='desconocida'
     ORDER BY last_seen DESC LIMIT 600`);
   function marketSamples(species,now=Date.now()){
-    return samplesQuery.all(String(species||''),now-7*86_400_000).map(marketRow);
+    return samplesQuery.all(String(species||''),now-MARKET_HISTORY_MS).map(marketRow);
   }
   const learningQuery=db.prepare(`SELECT ${marketColumns} FROM listings WHERE classification_checked=1
     AND last_seen>=? ORDER BY last_seen DESC LIMIT 250`);

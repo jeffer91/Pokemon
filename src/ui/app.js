@@ -40,8 +40,8 @@ function fillTable(id,rows,cols,empty){
 const STATE_LABEL={comprado:'Comprado',en_venta:'En venta',vendido:'Vendido',expirado:'Expiró sin venderse'};
 function renderTrades(s){
   if(s.near)fillTable('near',s.near,r=>[offerName(r),currency(r.price),
-    Number.isFinite(r.score)?r.score.toFixed(1)+'/10':'—',currency(r.netEstimate),r.reasonText||'—'],
-    'Aún no hay candidatos para verificar.');
+    currency(r.netEstimate),r.reasonText||'—',r.quote?.filters.join(' · ')||'—'],
+    'Aún no hay candidatos para cotizar.');
   if(s.trades){
     fillTable('trades',s.trades,t=>[offerName(t),currency(t.buy_price),
       t.listed_price?currency(t.listed_price):'—',STATE_LABEL[t.state]||t.state,
@@ -113,13 +113,13 @@ function renderData(data){
   renderCompetitive(data.competitive||[]);
   renderProjects(data.projects||[]);
   renderActivity(s.activity||[]);
-  $('radar-tip').textContent=(s.total||0)+' anuncios leídos · COMPRAR requiere referencias de precio, margen neto y saldo disponible. '+
-    'La nota de calidad refleja los IV y el perfil competitivo.';
+  $('radar-tip').textContent=(s.total||0)+' anuncios leídos · COMPRAR requiere precios comparables, margen neto y saldo. '+
+    'COTIZAR indica que la app necesita referencias para ese Pokémon.';
 
   const listings=$('listings');listings.replaceChildren();
   for(const row of (data.recent||[]).slice(0,8)){
     const tr=document.createElement('tr');
-    const label=DECISION_NAME[row.decision]||'—';
+    const label=row.needsQuote?'Cotizar':DECISION_NAME[row.decision]||'—';
     for(const value of [offerName(row),row.ivs?.filter(x=>x===31).length+'×31',
       Number.isFinite(row.qualityScore)?row.qualityScore.toFixed(1)+'/10':'—',
       Number.isFinite(row.netEstimate)?currency(row.netEstimate):'—',
@@ -145,8 +145,10 @@ function renderData(data){
   const reasons={
     RESERVA_30_POR_CIENTO:'Supera tu presupuesto disponible',
     MARGEN_INSUFICIENTE:'Margen insuficiente',
-    DESCUENTO_INSUFICIENTE:'Descuento insuficiente para crianza',
+    DESCUENTO_INSUFICIENTE:'Descuento insuficiente',
     MUESTRA_INSUFICIENTE:'Faltan referencias de precio',
+    REFERENCIA_ACTUAL_FALTANTE:'Hay historial · falta un precio actual',
+    HAY_EQUIVALENTE_MAS_BARATO:'Hay un anuncio equivalente más barato',
     SALDO_NO_CONFIRMADO:'Saldo por confirmar',
     DESCUENTO_Y_MARGEN:'Precio favorable según comparables'
   };

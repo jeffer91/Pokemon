@@ -125,7 +125,7 @@ window.radar.on('radar:overlay',payload=>{
   }
   const rows=(payload.rows||[]).map(row=>({
     rank:row.rank,decision:row.decision,score:row.score,scoreKind:row.scoreKind,
-    reasonText:row.reasonText,reason:row.reason,species:row.species,price:row.price,learn:row.learn,
+    reasonText:row.reasonText,reason:row.reason,species:row.species,price:row.price,learn:row.learn,needsQuote:row.needsQuote,
     sex:row.sex,variant:row.variant,fingerprint:row.fingerprint
   }));
   let fresh=false;
@@ -178,7 +178,7 @@ window.radar.on('radar:overlay',payload=>{
       const compactMeta=info&&payload.step<43;
       score.textContent=compactMeta?info:rating||'—';
       const state=document.createElement('strong');
-      state.textContent=item.decision==='COMPRAR'?'COMPRAR':
+      state.textContent=item.needsQuote?'COTIZAR':item.decision==='COMPRAR'?'COMPRAR':
         item.decision==='NO_COMPRAR'?'NO COMPRAR':item.decision==='POR_VERIFICAR'?'POR VERIFICAR':'LEYENDO';
       upper.append(score,state);
       const why=document.createElement('span');why.className='decision-reason';

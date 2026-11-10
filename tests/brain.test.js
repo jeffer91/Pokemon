@@ -4,6 +4,7 @@ const assert=require('node:assert/strict');
 const {assess,profileFit}=require('../src/brain');
 const {targetsFor}=require('../src/lines');
 const {PRIORITY_PROFILES}=require('../src/priority-profiles');
+const {DAY_MS,MARKET_HISTORY_MS}=require('../src/market');
 
 const now=Date.now();
 const gible=(price,ivs=[10,31,12,8,14,31],extra={})=>({species:'Gible',level:1,nature:'alegre',sex:'F',
@@ -159,6 +160,49 @@ test('a cheap quote seen hours ago does not cap the current Gible market',()=>{
   assert.equal(current.reason,'MARGEN_INSUFICIENTE');
   const allHistorical=[cheap,...peers].map(row=>({...row,lastSeen:now-2*3600_000}));
   assert.equal(assess(gible(9000),allHistorical,opts).resale,12820);
+});
+
+test('a week of compatible prices can complete evidence when a current offer corroborates it',()=>{
+  const row=gible(9000);
+  const older=[15000,17000].map((price,i)=>gible(price,undefined,{lastSeen:now-(i+2)*DAY_MS}));
+  const current=gible(16000);
+  const result=assess(row,[...older,current],opts);
+  assert.equal(result.decision,'COMPRAR');
+  assert.equal(result.scope,'precio actual + historial');
+  assert.equal(result.comparables,1);
+  assert.equal(result.historicalComparables,2);
+  assert.equal(result.resale,15345);
+  const onlyHistory=[...older,{...current,lastSeen:now-4*DAY_MS}];
+  const pending=assess(row,onlyHistory,opts);
+  assert.equal(pending.decision,'POR_VERIFICAR');
+  assert.equal(pending.reason,'REFERENCIA_ACTUAL_FALTANTE');
+  assert.equal(pending.needsQuote,true);
+  assert.equal(pending.historicalComparables,3);
+  for(const invalid of [{variant:'alfa'},{sex:'M'},{ivs:[31,31,12,8,14,31]},
+    {lastSeen:now-MARKET_HISTORY_MS-1},{age:'7 días'}]){
+    assert.equal(assess(row,[{...older[0],...invalid},older[1],current],opts).decision,'POR_VERIFICAR');
+  }
+  assert.equal(assess(row,[older[0],older[0],current],opts).decision,'POR_VERIFICAR');
+});
+
+test('a quote supported by history requires a wider net margin and discount',()=>{
+  const older=[35500,36400].map(price=>gible(price,undefined,{lastSeen:now-2*DAY_MS}));
+  const peers=[...older,gible(36000)];
+  assert.equal(assess(gible(32800),peers,opts).reason,'MARGEN_INSUFICIENTE');
+  const result=assess(gible(32000),peers,opts);
+  assert.ok(result.netEstimate>=2000);
+  assert.equal(result.reason,'DESCUENTO_INSUFICIENTE');
+});
+
+test('a current cheaper equivalent can rule out a buy with just one comparison',()=>{
+  const cheap=gible(8500);
+  const result=assess(gible(9000),[cheap],opts);
+  assert.equal(result.decision,'NO_COMPRAR');
+  assert.equal(result.reason,'HAY_EQUIVALENTE_MAS_BARATO');
+  assert.equal(result.priceReference,8500);
+  assert.equal(result.netEstimate,undefined);
+  assert.equal(assess(gible(9000),[{...cheap,lastSeen:now-2*DAY_MS}],opts).needsQuote,true);
+  assert.equal(assess(gible(9000),[{...cheap,sex:'M'}],opts).needsQuote,true);
 });
 
 test('an ad that sat unsold for days competes but is not evidence of value',()=>{

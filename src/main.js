@@ -24,7 +24,7 @@ function cellPng(source,rect,minHeight=0){
   return nativeImage.createFromBitmap(invertForOcr(img.toBitmap()),{width:size.width,height:size.height}).toPNG();
 }
 const {parseNameCell,fuzzyNature,parseMoney}=require('./recognition');
-const {createLearner}=require('./learning');
+const {createLearner,priceMission}=require('./learning');
 const {LABEL_COLUMN,boxVisible,BOX_REGION,ALPHA_EMBLEM,parseBox,frameRect,alphaEmblem,saleAdvice}=require('./pc-box');
 
 if(!app.requestSingleInstanceLock())app.quit();
@@ -131,13 +131,23 @@ function trackNear(decisions){
     if(d.decision!=='POR_VERIFICAR'&&!(d.decision==='NO_COMPRAR'&&d.netEstimate>0)){
       nearBargains.delete(d.fingerprint);continue;
     }
-    nearBargains.set(d.fingerprint,{species:d.species,level:d.level,price:d.price,score:d.score,
-      variant:d.variant,sex:d.sex,references:(d.comparables??0)+(d.confirmedSales??0),
+    const mission=d.needsQuote?priceMission(d,PRIORITY_PROFILES,d.quoteTier):null;
+    nearBargains.set(d.fingerprint,{species:d.species,level:d.level,price:d.price,
+      variant:d.variant,sex:d.sex,total31:d.total31,
+      references:(d.comparables??0)+(d.confirmedSales??0)+(d.historicalComparables??0),
+      quote:mission?{id:mission.id,filters:[...mission.filters,'Menor Precio']}:null,
       netEstimate:d.netEstimate??null,reasonText:d.reasonText,seenAt:now});
   }
   for(const [k,v] of nearBargains)if(now-v.seenAt>30*60_000)nearBargains.delete(k);
-  return [...nearBargains.values()].sort((a,b)=>(b.netEstimate??0)-(a.netEstimate??0)||
-    b.references-a.references||b.seenAt-a.seenAt).slice(0,5);
+  const sorted=[...nearBargains.values()].sort((a,b)=>(b.netEstimate??0)-(a.netEstimate??0)||
+    b.references-a.references||Number(b.total31>0)-Number(a.total31>0)||a.price-b.price||b.seenAt-a.seenAt);
+  const shortlist=new Map();
+  for(const candidate of sorted){
+    const key=candidate.quote?.id??candidate;
+    if(!shortlist.has(key))shortlist.set(key,candidate);
+    if(shortlist.size===5)break;
+  }
+  return [...shortlist.values()];
 }
 function publishLearn(){
   setStatus({kind:sessionKind,learn:learnView(),missions:sessionKind==='learn'&&learner?learner.list():[]});
@@ -277,7 +287,7 @@ function recentEvaluated(profiles){
     const p=profiles.find(p=>p.searchSpecies.toLowerCase()===species);
     const q=grade(row,ev,p);
     return {...row,ivQuality:q.iv,qualityScore:ev.score,criQuality:q.cri,fitQuality:q.fit,
-      decision:ev.decision,reasonText:ev.reasonText,netEstimate:ev.netEstimate??null};
+      decision:ev.decision,needsQuote:ev.needsQuote,reasonText:ev.reasonText,netEstimate:ev.netEstimate??null};
   });
 }
 function publishData(force=false){
@@ -647,6 +657,7 @@ async function tick(){
     stage='engine';
     const decisions=[];
     const hunting=sessionKind==='hunt';
+    let quoteCount=0;
     if(hunting){
       const options=brainOptions();
       const evidence=new Map();
@@ -662,8 +673,10 @@ async function tick(){
           {decision:'SILENCIO',reason:'LECTURA_INCOMPLETA',reasonText:'Lectura incompleta',score:null};
         decisions.push({...row,...ev});
       }
+      quoteCount=decisions.filter(d=>d.needsQuote).length;
       track('engine',options.balance===null?'warn':'ok',options.balance===null?'ECO-001':'ECO-OK',
-        options.balance===null?'Saldo por confirmar':'Evaluadas '+rows.length+' ofertas');
+        (options.balance===null?'Saldo por confirmar':'Evaluadas '+rows.length+' ofertas')+
+        (quoteCount?' · '+quoteCount+' por cotizar':''));
     }
     const bargainCount=decisions.filter(d=>d.decision==='COMPRAR').length;
     stage='database';
@@ -734,7 +747,7 @@ async function tick(){
       await showResults([...current.values()].sort((a,b)=>a.rank-b.rank),version,res.layout||lastDisplayedLayout);
     }else await showCompact();
     rememberSeen(rows,decisions);
-    const near=sessionKind==='hunt'?trackNear(decisions):[];
+    const near=hunting?trackNear(decisions):[];
     const readMs=Math.round(performance.now()-ocrStart);
     readAvgMs=readAvgMs===null?readMs:Math.round(readAvgMs*.7+readMs*.3);
     lastReadAt=Date.now();lastReadRows=rows.length;lastVisibleRows=expected;
@@ -742,7 +755,8 @@ async function tick(){
     const mission=learnView();
     setStatus({state:'activo',
       message:advancedMission?(mission?.done?'Sin misiones pendientes':'Siguiente misión · '+mission?.species):
-        rows.length+'/'+expected+' leídos'+(hunting?(bargainCount?' · Gangas: '+bargainCount:' · Sin gangas confirmadas'):
+        rows.length+'/'+expected+' leídos'+(hunting?(bargainCount?' · Gangas: '+bargainCount:
+          quoteCount?' · '+quoteCount+' por cotizar':' · Sin gangas confirmadas'):
           ' · Aprendiendo'),
       recognized:rows.length,latency:Math.round(performance.now()-start),near,trades:storage.trades()});
   }catch(error){

@@ -41,31 +41,36 @@ function buildMissions(profiles=[]){
   return missions;
 }
 
+// The same search recipe guides a mission and a candidate that lacks prices.
+function priceMission(row,profiles=[],tier='breeding'){
+  if(!usableListing(row))return null;
+  const variant=variantOf(row),sex=sexOf(row);
+  const {fit,exact,breeding}=classKeys(row,profiles);
+  const breed=tier==='breeding'&&!!breeding;
+  const reference=breed?breeding:exact;
+  const ditto=speciesKey(row.species)==='ditto';
+  const ivs=ditto?[]:row.ivs.flatMap((value,i)=>value===31?[i]:[]);
+  const nature=breed||ditto?null:row.nature;
+  const filters=ivs.map(i=>IV_NAMES[i]+' 31');
+  if(ditto&&fit.total31)filters.push('Coincidencias de IV: '+fit.total31);
+  if(nature)filters.push('Naturaleza '+nature);
+  if(sex!=='N')filters.push('Sexo '+SEX_LABEL[sex]);
+  filters.push(...(variant==='normal'?['Normal']:variant.split('+').map(tag=>VARIANT_LABEL[tag])));
+  const target=breed?'Crianza':variant!=='normal'?'Variante especial':'Competitivo';
+  const catalog=breed?findCatalog(row.species):null;
+  const note=breed&&!ditto?catalog?.breedingLimit||(catalog?.eggGroups?.length?
+    'Grupo huevo · '+catalog.eggGroups.join(' / '):'Confirma el grupo huevo para tu cruce'):null;
+  return {id:'foco|'+reference,species:row.species,ivs,nature,sex,variant,reference,breed,target,
+    ...(ditto?{total31:fit.total31}:{}),filters,note,sort:'Precio (más barato primero)'};
+}
+
 function focusedMissions(rows,profiles,limit,now){
   const missions=new Map();
   for(const row of rows){
-    if(!usableListing(row)||!isFreshComparable(row,now)||Number.isFinite(limit)&&row.price>limit)continue;
-    const variant=variantOf(row),sex=sexOf(row);
-    const {fit,exact,breeding}=classKeys(row,profiles);
-    if(variant==='normal'&&!fit.total31)continue;
-    const breed=variant==='normal'&&!!breeding;
-    const reference=breed?breeding:exact;
-    const id='foco|'+reference;
-    if(missions.has(id)||id.length>80)continue;
-    const ditto=speciesKey(row.species)==='ditto';
-    const ivs=ditto?[]:row.ivs.flatMap((value,i)=>value===31?[i]:[]);
-    const nature=breed||ditto?null:row.nature;
-    const filters=ivs.map(i=>IV_NAMES[i]+' 31');
-    if(ditto&&fit.total31)filters.push('Coincidencias de IV: '+fit.total31);
-    if(nature)filters.push('Naturaleza '+nature);
-    if(sex!=='N')filters.push('Sexo '+SEX_LABEL[sex]);
-    if(variant!=='normal')filters.push(...variant.split('+').map(tag=>VARIANT_LABEL[tag]));
-    const target=breed?'Crianza':variant!=='normal'?'Variante especial':'Competitivo';
-    const catalog=breed?findCatalog(row.species):null;
-    const note=breed&&!ditto?catalog?.breedingLimit||(catalog?.eggGroups?.length?
-      'Grupo huevo · '+catalog.eggGroups.join(' / '):'Confirma el grupo huevo para tu cruce'):null;
-    missions.set(id,{id,species:row.species,ivs,nature,sex,variant,reference,breed,target,
-      ...(ditto?{total31:fit.total31}:{}),filters,note,priority:-100+missions.size,sort:'Precio (más barato primero)'});
+    if(!row||!isFreshComparable(row,now)||Number.isFinite(limit)&&row.price>limit)continue;
+    const mission=priceMission(row,profiles);
+    if(!mission||mission.variant==='normal'&&!count31(row.ivs)||missions.has(mission.id)||mission.id.length>80)continue;
+    missions.set(mission.id,{...mission,priority:-100+missions.size});
     if(missions.size===12)break;
   }
   return [...missions.values()];
@@ -254,4 +259,4 @@ function createLearner({profiles=[],samplesFor=()=>[],skipped=[],budget=()=>null
   return {view,observe,labels,next,list,setFilters,current:()=>current,skipped:()=>[...skip]};
 }
 
-module.exports={checkFilters,buildMissions,createLearner,judge,GOAL};
+module.exports={checkFilters,buildMissions,createLearner,judge,priceMission,GOAL};

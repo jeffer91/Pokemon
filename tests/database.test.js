@@ -79,6 +79,30 @@ test('the evaluator can use complete peers recorded from the same scan and exclu
   }finally{db.close();fs.rmSync(dir,{recursive:true,force:true});}
 });
 
+test('a filtered GTL scan can complete the prices of a Krokorok with stored quotes',()=>{
+  const {assess}=require('../src/brain');
+  const {DAY_MS}=require('../src/market');
+  const {PRIORITY_PROFILES:profiles}=require('../src/priority-profiles');
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'radar-history-prices-'));
+  const db=openDatabase(dir);
+  const row={species:'Krokorok',level:31,sex:'F',nature:'placida',ivs:[19,22,31,16,1,25],price:1500,rank:1};
+  const clock=Date.now;
+  const now=clock();
+  try{
+    Date.now=()=>now-2*DAY_MS;
+    db.recordMarketScan({rows:[{...row,price:5700},{...row,price:6200,rank:2}],context:'krokorok|price',sort:'price'});
+    Date.now=()=>now;
+    db.recordMarketScan({rows:[row],context:'general|newest',sort:'newest'});
+    const options={profiles,balance:63672,now};
+    assert.equal(assess(row,db.marketSamples(row.species),options).needsQuote,true);
+    db.recordMarketScan({rows:[row,{...row,price:6000,rank:2}],context:'krokorok|price',sort:'price'});
+    const priced=assess(row,db.marketSamples(row.species),options);
+    assert.equal(priced.decision,'COMPRAR');
+    assert.equal(priced.netEstimate,3291);
+    assert.equal(priced.historicalComparables,2);
+  }finally{Date.now=clock;db.close();fs.rmSync(dir,{recursive:true,force:true});}
+});
+
 test('guarda el motor de captura seleccionado sin cambiar el esquema SQLite',()=>{
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'radar-engine-'));
   let db=openDatabase(dir);

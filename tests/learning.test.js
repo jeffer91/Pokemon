@@ -1,7 +1,7 @@
 'use strict';
 const {test}=require('node:test');
 const assert=require('node:assert/strict');
-const {buildMissions,createLearner,judge,GOAL}=require('../src/learning');
+const {buildMissions,createLearner,judge,priceMission,GOAL}=require('../src/learning');
 const {PRIORITY_PROFILES}=require('../src/priority-profiles');
 
 const gible=(i,extra={})=>({rank:1,species:'Gible',level:1,nature:'Alegre',sex:'F',price:9000+i,
@@ -86,4 +86,19 @@ test('visible filter cells replace stale values and skipping advances the displa
   assert.equal(after.position,before.position+1);
   assert.equal(after.skipped,before.skipped+1);
   assert.equal(after.completed,before.completed);
+});
+
+test('the suggested quote search matches the actual breeding class',()=>{
+  const row={species:'Krokorok',level:31,sex:'F',nature:'placida',ivs:[19,22,31,16,1,25],price:1500};
+  const m=priceMission(row,PRIORITY_PROFILES);
+  assert.deepEqual(m.filters,['Defensa 31','Sexo Hembra','Normal']);
+  assert.equal(judge({...row,nature:'docil'},m,PRIORITY_PROFILES).state,'ok');
+  assert.equal(judge({...row,sex:'M'},m,PRIORITY_PROFILES).state,'no');
+  assert.equal(judge({...row,variant:'alfa'},m,PRIORITY_PROFILES).state,'other');
+  assert.equal(judge({...row,ivs:[31,22,31,16,1,25]},m,PRIORITY_PROFILES).state,'other');
+  const exact=priceMission(row,PRIORITY_PROFILES,'exact');
+  assert.match(judge({...row,nature:'docil'},exact,PRIORITY_PROFILES).text,/Naturaleza/);
+  const special=priceMission({...row,variant:'alfa+particulas'},PRIORITY_PROFILES);
+  assert.deepEqual(special.filters,['Defensa 31','Naturaleza placida','Sexo Hembra','Alfa','Partículas']);
+  assert.equal(priceMission({...row,sex:'?'},PRIORITY_PROFILES),null);
 });

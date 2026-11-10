@@ -36,17 +36,18 @@
       <tbody id="listings"><tr><td colspan="6">Sin datos todavía</td></tr></tbody></table></div>
     </div>
     <div class="tip" id="radar-tip">La base se alimentará mientras revisas el GTL.</div>
+    <div class="panel" id="near-panel">
+      <div class="heading"><h2>Para cotizar</h2><span>Hasta 5 candidatos recientes</span></div>
+      <p class="hint">Busca la especie indicada con estos filtros. Gangas toma como referencia los anuncios con los mismos IV de 31, sexo y variante.</p>
+      <div class="scroll"><table><thead><tr><th>Pokémon</th><th>Precio</th><th>Ganancia est.</th><th>Motivo</th><th>Qué buscar en el GTL</th></tr></thead>
+      <tbody id="near"><tr><td colspan="5">Usa «Cazar gangas» para ver los candidatos a cotizar.</td></tr></tbody></table></div>
+    </div>
     <div class="panel" id="learn-panel">
       <div class="heading"><h2>Aprender precios</h2><span id="learn-count">Pulsa «Aprender precios»</span></div>
       <div id="learn-current" class="learn-current">Aplica los filtros de la misión en el GTL y selecciona Menor Precio. El progreso cuenta anuncios distintos, completos y comparables entre sí.</div>
       <div class="learn-actions"><button id="next-mission" class="ghost" disabled>Saltar misión</button></div>
       <div class="scroll"><table><thead><tr><th>Próximas misiones</th><th>Filtros</th><th>Datos</th><th>Para</th></tr></thead>
       <tbody id="missions"><tr><td colspan="4">—</td></tr></tbody></table></div>
-    </div>
-    <div class="panel" id="near-panel">
-      <div class="heading"><h2>Para verificar</h2><span>Hasta 5 candidatos de los últimos 30 min</span></div>
-      <div class="scroll"><table><thead><tr><th>Pokémon</th><th>Precio</th><th>Calidad</th><th>Ganancia est.</th><th>Por qué no llega</th></tr></thead>
-      <tbody id="near"><tr><td colspan="5">Usa «Cazar gangas» para ver aquí lo más cercano a una compra.</td></tr></tbody></table></div>
     </div>
     <div class="panel" id="trades-panel">
       <div class="heading"><h2>Mis compras</h2><span id="trades-summary">Se registran solas cuando tu saldo baja por el precio de un anuncio visto</span></div>
@@ -212,10 +213,10 @@
       <div class="heading"><h2>Configuración automática</h2></div>
       <div class="line"><span>Reserva de saldo</span><strong>15 %</strong></div>
       <div class="line"><span>Comisión de reventa</span><strong>1.000 ¥ por anuncio</strong></div>
-      <div class="line"><span>Margen neto mínimo</span><strong>1.000 ¥ · crianza 2.000 ¥</strong></div>
+      <div class="line"><span>Margen neto mínimo</span><strong>1.000 ¥ · crianza o historial 2.000 ¥</strong></div>
       <div class="line"><span>Ubicación del radar</span><strong>Automática</strong></div>
       <div class="line"><span>Captura del GTL</span><strong>Solo con Play</strong></div>
-      <p class="hint">La ganancia estimada descuenta la cuota de publicación. En las comparaciones de crianza también se exige un descuento de al menos el 20 % sobre el precio estimado de reventa.</p>
+      <p class="hint">La ganancia estimada descuenta la cuota de publicación. Si la referencia se apoya en el historial o en precios de crianza, la app exige al menos un 20 % de descuento.</p>
     </div>
   </section>
   <div id="notice" role="status" aria-live="polite"></div>

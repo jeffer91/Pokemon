@@ -9,6 +9,7 @@ const RESERVE_RATIO = 0.15; // the player chose a 15 % reserve (v0.14)
 const VARIANT_MARKS=['alfa','variocolor','particulas'];
 const UNKNOWN_VARIANT='desconocida';
 const DAY_MS=86_400_000;
+const MARKET_HISTORY_MS=7*DAY_MS;
 const GENDERLESS=new Set(('magnemite magneton magnezone voltorb electrode staryu starmie ditto '+
   'porygon porygon2 porygonz unown shedinja lunatone solrock baltoy claydol beldum metang metagross '+
   'bronzor bronzong rotom phione manaphy klink klang klinklang golett golurk cryogonal').split(' '));
@@ -78,5 +79,5 @@ function researchSuggestions(stats = {}) {
   return list.slice(0, 5);
 }
 module.exports={NATURES,validListing,validPrice,median,signature,availableToSpend,researchSuggestions,
-  RESERVE_RATIO,normalizedNature,VARIANT_MARKS,UNKNOWN_VARIANT,DAY_MS,variantOf,sexOf,identity,
+  RESERVE_RATIO,normalizedNature,VARIANT_MARKS,UNKNOWN_VARIANT,DAY_MS,MARKET_HISTORY_MS,variantOf,sexOf,identity,
   usableListing,isRecentOffer,isFreshComparable};

@@ -1,6 +1,6 @@
 {
   "name": "pokeradar-gtl",
-  "version": "0.16.1",
+  "version": "0.16.2",
   "description": "PokéRadar: buscador de gangas del GTL con margen de reventa y nota de calidad",
   "private": true,
   "main": "src/main.js",

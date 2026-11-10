@@ -1,4 +1,4 @@
-# PokéRadar GTL — v0.16.1
+# PokéRadar GTL — v0.16.2
 
 Aplicación de escritorio Electron para Windows 11. **Play** inicia una sesión de lectura visual del GTL, sin formularios de cuota ni posiciones X/Y, y muestra un pequeño radar flotante. No realiza compras ni controla el cliente del juego.
 
@@ -22,7 +22,7 @@ npm test
 
 1. Pulsa **Play**. La ventana principal se minimiza y el indicador compacto aparece. Ya no se exige marcar una casilla ni escribir un importe.
 2. Al abrir GTL → Anuncios de Pokémon, la app intenta reconocer las 10 filas visibles. Se alinea automáticamente con los botones Comprar observados; si no hay suficientes referencias, utiliza una posición relativa al juego.
-3. **COMPRAR** indica que el precio cabe en el presupuesto y el margen neto estimado supera el mínimo según las referencias de mercado. **Por verificar** indica que falta confirmar datos del anuncio, referencias de precio o saldo.
+3. **COMPRAR** indica que el precio cabe en el presupuesto y el margen neto estimado alcanza el mínimo según las referencias de mercado. Si aparece **COTIZAR**, abre **Gangas → Para cotizar** y busca la especie con los filtros sugeridos, ordenando por **Menor Precio**.
 4. Al salir del GTL se compacta. Para detenerla, restaura PokéRadar desde la barra de tareas y pulsa **Stop**.
 5. En **Buscar** verás sugerencias para poblar el historial. En **Historial** puedes consultar registros y confirmar operaciones.
 
@@ -339,6 +339,11 @@ Revisado con la base real del jugador (558 anuncios, 183 especies): el 60 % esta
 - Ritmo: 0,7 s con el GTL visible (OCR solo si la tabla cambia), 2,5 s fuera del GTL y pausa total mientras usas la ventana de PokéRadar.
 
 **Versión visible** en la cabecera, en el título de la ventana y en el diagnóstico.
+
+## v0.16.2 — Cotización con historial
+
+- Si faltan precios recientes, la app puede completar la muestra con anuncios compatibles leídos en los últimos **7 días**. Este cálculo exige un comparable de los últimos **15 minutos**, un margen neto de al menos **2.000 ¥** y un descuento del **20 %** sobre la reventa estimada.
+- **COTIZAR** muestra cuántas referencias faltan o si hace falta actualizar un precio. **Gangas → Para cotizar** indica qué especie, sexo, variante e IV buscar y cómo ordenar los resultados. Si ya se vio un anuncio equivalente más barato, la app lo indica con **NO COMPRAR**.
 
 ## v0.16.1 — Margen de reventa y calidad
 
