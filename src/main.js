@@ -3,13 +3,12 @@ const {app,BrowserWindow,desktopCapturer,ipcMain,screen,clipboard,nativeImage,gl
 const path=require('node:path');
 const crypto=require('node:crypto');
 const {openDatabase,identity}=require('./database');
-const {assess,learnMultipliers}=require('./brain');
-const {targetsFor,speciesKey}=require('./lines');
-const {availableToSpend}=require('./market');
+const {assess,classKeys}=require('./brain');
+const {availableToSpend,sexOf,variantOf,usableListing,VARIANT_MARKS,UNKNOWN_VARIANT}=require('./market');
 const {PRIORITY_PROFILES}=require('./priority-profiles');
 const {createRecognizer}=require('./recognition');
 const {locateWindow,captureNative}=require('./window-locator');
-const {nextDelay,region,shouldCheckHeader}=require('./scan-policy');
+const {nextDelay,region,marketRegion,shouldCheckHeader}=require('./scan-policy');
 const {inspectThumbnail,locateGtlPanel,inferGtlSexes}=require('./frame-health');
 const {createDiagnostics}=require('./diagnostics');
 const {createGameCapture}=require('./capture-source');
@@ -27,7 +26,6 @@ function cellPng(source,rect,minHeight=0){
 const {parseNameCell,fuzzyNature,parseMoney}=require('./recognition');
 const {createLearner}=require('./learning');
 const {LABEL_COLUMN,boxVisible,BOX_REGION,ALPHA_EMBLEM,parseBox,frameRect,alphaEmblem,saleAdvice}=require('./pc-box');
-const {classKeys}=require('./brain');
 
 if(!app.requestSingleInstanceLock())app.quit();
 // The overlay plays a short alert when a bargain appears, without a click.
@@ -54,22 +52,45 @@ let marketCache=null,marketCacheAt=0;
 // 'hunt' = buscar gangas; 'learn' = misiones guiadas para llenar precios.
 let sessionKind='hunt',learner=null,lastPageFrom=null,lastMarketKey='';
 // Live reading counter shown on the overlay: phase, start time, expected time.
-let readPhase={phase:'idle',since:0},readAvgMs=null,lastReadAt=0,lastReadRows=0;
+let readPhase={phase:'idle',since:0},readAvgMs=null,lastReadAt=0,lastReadRows=0,lastVisibleRows=0;
+function liveProgress(){
+  return {...readPhase,expectMs:readAvgMs,lastReadAt,lastReadRows,lastVisibleRows,kind:sessionKind};
+}
 function progress(phase){
   if(readPhase.phase===phase&&phase!=='leyendo')return;
   readPhase={phase,since:Date.now()};
-  broadcast('radar:progress',{phase,since:readPhase.since,expectMs:readAvgMs,lastReadAt,lastReadRows,kind:sessionKind});
+  broadcast('radar:progress',liveProgress());
 }
-const NEXT_KEY='Control+Alt+Right';
-function learnView(){return sessionKind==='learn'&&learner?learner.view():null;}
+const NEXT_KEYS=[
+  {key:'Control+Alt+Right',label:'Ctrl + Alt + →'},
+  {key:'Control+Shift+F8',label:'Ctrl + Shift + F8'}
+];
+const nextShortcuts=[];
+function unregisterNext(){
+  for(const shortcut of nextShortcuts.splice(0))try{globalShortcut.unregister(shortcut.key);}catch{}
+}
+function registerNext(){
+  for(const shortcut of NEXT_KEYS){
+    try{
+      if(globalShortcut.register(shortcut.key,nextMission))nextShortcuts.push(shortcut);
+    }catch{}
+  }
+  if(!nextShortcuts.length)track('gtl','warn','GTL-ATAJO','Atajo no disponible · usa el botón Saltar misión');
+}
+function learnView(){
+  if(sessionKind!=='learn'||!learner)return null;
+  return {...learner.view(),shortcut:nextShortcuts.map(s=>s.label).join(' o ')||null};
+}
 function nextMission(){
-  if(!learner)return null;
+  if(!sessionActive||sessionKind!=='learn'||!learner?.current())return null;
   const view=learner.next();
   try{storage.applySettings({learnSkipped:learner.skipped().slice(-500)});}catch{}
-  lastPageSignature='';
+  lastDisplayedRows=null;lastPageSignature='';tableHash='';
   publishLearn();
-  if(lastDisplayedRows)void showResults(lastDisplayedRows,sessionVersion,lastDisplayedLayout);
-  else void showCompact();
+  const message=view.done?'Sin misiones pendientes':'Siguiente misión · '+view.species;
+  setStatus({message});
+  progress('mision');
+  void showCompact(message);
   return view;
 }
 // Rows seen recently: a balance drop equal to one of their prices = a purchase.
@@ -78,16 +99,19 @@ const nearBargains=new Map();
 function rememberSeen(rows,decisions){
   const now=Date.now();
   for(const r of rows){
-    if(!Number.isSafeInteger(r.price)||!r.species)continue;
+    if(!usableListing(r))continue;
     const d=decisions.find(x=>x.rank===r.rank);
-    recentSeen.push({...r,seenAt:now,score:d?.score??null});
+    recentSeen.push({...r,fingerprint:identity(r),seenAt:now,score:d?.score??null});
   }
   while(recentSeen.length&&(recentSeen.length>400||now-recentSeen[0].seenAt>20*60_000))recentSeen.shift();
 }
 function detectPurchase(previous,balance){
   if(!Number.isSafeInteger(previous)||!Number.isSafeInteger(balance)||balance>=previous)return null;
   const drop=previous-balance;
-  let match=[...recentSeen].reverse().find(r=>r.price===drop&&!r.bought);
+  const offers=new Map(recentSeen.filter(r=>r.price===drop&&!r.bought&&Date.now()-r.seenAt<20*60_000)
+    .map(r=>[r.fingerprint,r]));
+  if(offers.size>1)return null;
+  let match=offers.values().next().value;
   if(!match){
     // Fallback to the database: works after restarts and on any screen.
     const row=storage.recentByPrice(drop);
@@ -95,7 +119,7 @@ function detectPurchase(previous,balance){
     if(row&&!already)match={...row,score:null};
   }
   if(!match)return null;
-  for(const r of recentSeen)if(r.species===match.species&&r.price===match.price)r.bought=true;
+  for(const r of recentSeen)if(r.fingerprint===match.fingerprint)r.bought=true;
   storage.recordPurchase(match,{score:match.score});
   return match;
 }
@@ -103,13 +127,16 @@ function detectPurchase(previous,balance){
 function trackNear(decisions){
   const now=Date.now();
   for(const d of decisions){
-    if(!Number.isFinite(d.score)||d.decision==='COMPRAR'||d.learn)continue;
-    const key=[d.species,d.level,d.nature,d.price,(d.ivs||[]).join(',')].join('|');
-    nearBargains.set(key,{species:d.species,level:d.level,price:d.price,score:d.score,
+    if(!d.fingerprint)continue;
+    if(d.decision!=='POR_VERIFICAR'&&!(d.decision==='NO_COMPRAR'&&d.netEstimate>0)){
+      nearBargains.delete(d.fingerprint);continue;
+    }
+    nearBargains.set(d.fingerprint,{species:d.species,level:d.level,price:d.price,score:d.score,quality:d.quality,
+      variant:d.variant,sex:d.sex,
       netEstimate:d.netEstimate??null,reasonText:d.reasonText,seenAt:now});
   }
   for(const [k,v] of nearBargains)if(now-v.seenAt>30*60_000)nearBargains.delete(k);
-  return [...nearBargains.values()].sort((a,b)=>b.score-a.score).slice(0,5);
+  return [...nearBargains.values()].sort((a,b)=>(b.score??b.quality??0)-(a.score??a.quality??0)).slice(0,5);
 }
 function publishLearn(){
   setStatus({kind:sessionKind,learn:learnView(),missions:sessionKind==='learn'&&learner?learner.list():[]});
@@ -177,11 +204,11 @@ function compactFallback(){
   const work=screen.getPrimaryDisplay().workArea;
   return {x:work.x+work.width-122,y:work.y+140,width:110,height:32};
 }
-async function showCompact(label='Radar'){
+async function showCompact(label=''){
   if(!sessionActive||!overlay||overlay.isDestroyed())return;
   const version=sessionVersion;
   const mission=learnView(),sale=mission?null:currentSale();
-  broadcast('radar:overlay',{mode:'compact',label,mission,sale});
+  broadcast('radar:overlay',{mode:'compact',label,mission,sale,live:liveProgress()});
   const width=mission||sale?300:200,height=mission?176:sale?150:40;
   const bounds=overlay.getBounds();
   if(!overlay.isVisible() || bounds.width!==width || bounds.height!==height)
@@ -199,8 +226,8 @@ async function showResults(rows,version,layout=null){
   const game=captureAgent?.getGameRect() || screen.getPrimaryDisplay().workArea;
   if(!sessionActive||sessionVersion!==version)return;
   if(!game)return showCompact();
-  const scale=1; // Automatic positioning; previous manually stored offsets are ignored.
-  const width=Math.round(232*scale);
+  const mission=learnView();
+  const width=mission?292:244;
   const auto=layout && Number.isFinite(layout.firstRowTopNorm) ? layout : null;
   const pixel=layout?.kind==='panel' && layout.panel && layout.frameWidth>0 && layout.frameHeight>0?
     layout:null;
@@ -217,50 +244,35 @@ async function showResults(rows,version,layout=null){
   const work=screen.getDisplayMatching(game).workArea;
   // In learn mode a mission card sits right above the first row.
   // Learn: mission card with filters and counter. Hunt: a thin counter strip.
-  const mission=learnView(),card=mission?176:38;
+  const card=mission?176:38;
   const bounds={
     x:Math.max(work.x,Math.min(work.x+work.width-width,x)),
     y:Math.max(work.y,Math.min(work.y+work.height-(10*step+10+card),y-card)),
     width,height:10*step+10+card
   };
   if(!sessionActive||sessionVersion!==version)return;
-  const signature=JSON.stringify([rows.map(r=>[r.rank,r.species,r.price,r.decision,r.score,
-    r.scoreKind,r.reason,r.reasonText,r.learn]),mission]);
+  const signature=JSON.stringify([rows.map(r=>[r.rank,r.fingerprint,r.species,r.price,r.sex,r.variant,
+    r.decision,r.score,r.reason,r.reasonText,r.learn]),mission]);
   if(signature!==lastPageSignature||lastOverlayBounds!==JSON.stringify(bounds)||!overlay.isVisible()){
-    broadcast('radar:overlay',{mode:'results',rows,step,scale,mission,card});
+    broadcast('radar:overlay',{mode:'results',rows,step,mission,card,live:liveProgress()});
     lastPageSignature=signature;
   }
   lastDisplayedRows=rows;lastDisplayedLayout=layout;
   place(bounds);
 }
-let multipliers=null,multipliersAt=0;
 function brainOptions(){
   const fee=storage.settings().listingFee;
-  // Price growth per extra 31, relearned from the whole database every minute.
-  if(!multipliers||Date.now()-multipliersAt>60_000){
-    try{multipliers=learnMultipliers(storage.recentPrices());}catch{}
-    multipliersAt=Date.now();
-  }
-  return {profiles:PRIORITY_PROFILES,balance:storage.latestBalance(),fee:Number.isSafeInteger(fee)?fee:null,
-    multipliers:multipliers||undefined};
-}
-// Ads of the final forms a base species evolves into (Litwick → Chandelure).
-function lineSamplesFor(species,cache=new Map()){
-  const finals=[...new Set(targetsFor(species,PRIORITY_PROFILES).map(p=>p.name.replace(/\s*\(.*\)$/,'')))]
-    .filter(n=>speciesKey(n)!==speciesKey(species));
-  return finals.flatMap(n=>{
-    const k=n.toLowerCase();
-    if(!cache.has(k))cache.set(k,storage.marketSamples(n));
-    return cache.get(k);
-  });
+  return {profiles:PRIORITY_PROFILES,balance:storage.latestBalance(),fee:Number.isSafeInteger(fee)?fee:null};
 }
 function recentEvaluated(profiles){
   const recent=storage.recent().slice(0,15),options=brainOptions();
   const cache=new Map();
   return recent.map(row=>{
     const species=String(row.species||'').toLowerCase();
-    if(!cache.has(species))cache.set(species,storage.marketSamples(row.species));
-    const ev=assess({...row,fingerprint:identity(row)},cache.get(species),{...options,lineSamples:lineSamplesFor(row.species)});
+    if(!row.classification_checked)return {...row,decision:'POR_VERIFICAR',reasonText:'Lectura anterior · vuelve a ver el anuncio'};
+    if(!cache.has(species))cache.set(species,{samples:storage.marketSamples(row.species),sales:storage.salesFor(row.species)});
+    const {samples,sales}=cache.get(species);
+    const ev=assess(row,samples,{...options,sales});
     const p=profiles.find(p=>p.searchSpecies.toLowerCase()===species);
     const q=grade(row,ev,p);
     return {...row,ivQuality:q.iv,revQuality:ev.score,criQuality:q.cri,fitQuality:q.fit,
@@ -347,7 +359,7 @@ function thumb(image,W,H){
   if(!t||t.W!==W){t={W,bmp:image.resize({width:W,height:H,quality:'good'}).toBitmap()};thumbCache.set(image,t);}
   return t.bmp;
 }
-function materiallyDifferent(previous,current,threshold=.008){
+function materiallyDifferent(previous,current,threshold=.008,watchPrices=false){
   // Two GTL pages of the same search differ only in a few digits, so compare a
   // finer thumbnail and react to 0.8 % of changed pixels. The table is static
   // (no animations), so hover/cursor noise stays well below that.
@@ -355,13 +367,16 @@ function materiallyDifferent(previous,current,threshold=.008){
     const W=320,H=160;
     const a=thumb(previous,W,H),b=thumb(current,W,H);
     if(a.length!==b.length)return true;
-    let changed=0,count=0;
+    let changed=0,count=0,priceChanged=0,pricePixels=0;
     for(let y=8;y<H-6;y++)for(let x=4;x<W-4;x++){
       const i=(y*W+x)*4;
       const delta=Math.abs(a[i]-b[i])+Math.abs(a[i+1]-b[i+1])+Math.abs(a[i+2]-b[i+2]);
       count++;if(delta>=90)changed++;
+      if(watchPrices&&x>=179&&x<214&&y>=28&&y<149){
+        pricePixels++;if(delta>=90)priceChanged++;
+      }
     }
-    return count>0 && changed/count>threshold; // measured: same page ≤0.03 %, next page ≈2.2 %
+    return changed/count>threshold||(pricePixels>0&&priceChanged/pricePixels>.008);
   }catch{return true;}
 }
 function cropped(picture,width,height,part){
@@ -479,14 +494,7 @@ async function tick(){
       if(!sessionActive||version!==sessionVersion)return;
     }
     // Use the actual GTL panel, not fixed coordinates relative to an entire monitor.
-    const rect=panel?{
-      x:panel.x,
-      y:panel.y+Math.round(panel.width*.132),
-      width:panel.width,
-      height:Math.min(size.height-panel.y-Math.round(panel.width*.132),
-        Math.round(panel.width*.48)),
-      fullWidth:size.width,fullHeight:size.height
-    }: {...region(size.width,size.height,'market'),fullWidth:size.width,fullHeight:size.height};
+    const rect=marketRegion(size,panel);
     if(rect.height<180||rect.width<450)throw Error('La región del GTL es demasiado pequeña');
     const marketImage=image.crop({x:rect.x,y:rect.y,width:rect.width,height:rect.height});
     const now=Date.now();
@@ -494,8 +502,9 @@ async function tick(){
     // crops the same page with a different alignment. Otherwise the footer
     // ("Mostrando X a Y") decides after the OCR.
     const marketKey=(capture.via||'')+'|'+rect.width+'x'+rect.height;
+    const watchPrices=!!panel&&lastOcrKind==='market';
     const pageChanged=!!lastMarketImage&&lastMarketKey===marketKey&&
-      materiallyDifferent(lastMarketImage,marketImage);
+      materiallyDifferent(lastMarketImage,marketImage,.008,watchPrices);
     lastMarketImage=marketImage;lastMarketKey=marketKey;
     if(pageChanged){
       diagnostics?.markOcrStale();
@@ -506,7 +515,7 @@ async function tick(){
     // filter, a state word, a page). Incomplete reads and the Advanced Search
     // form are re-checked sooner; a complete page waits 30 s.
     const changedSinceOcr=!tableHash||!lastOcrImage||lastOcrKey!==marketKey||
-      materiallyDifferent(lastOcrImage,marketImage,.003);
+      materiallyDifferent(lastOcrImage,marketImage,.003,watchPrices);
     const recheckMs=lastOcrKind==='advanced'?3000:lastOcrIncomplete?4000:30000;
     if(!changedSinceOcr&&now-lastTableCheckedAt<recheckMs){perf.skipped++;return;}
     const fp=imageHash(marketImage.toBitmap());
@@ -587,9 +596,10 @@ async function tick(){
               width:Math.round((x1-x0)*kx),height:Math.round(.028*panel.width*ky)};
           }).map(r=>({...r,width:Math.min(r.width,enlargedSize.width-r.x),height:Math.min(r.height,enlargedSize.height-r.y)}));
           const read=await recognizer.readDigits(rects.map(r=>cellPng(enlarged,r,40)),{max:100});
-          wanted.forEach((k,i)=>{if(Number.isInteger(read[i]))values[k]=read[i];});
+          wanted.forEach((k,i)=>{if(Number.isInteger(read[i])&&read[i]<=(k==='matches'?6:31))values[k]=read[i];});
         }
-        learner.setFilters(values);
+        if(!sessionActive||version!==sessionVersion)return;
+        if(m?.id===learner.current()?.id)learner.setFilters(values,Object.keys(res.filters.cells));
         publishLearn();
       }
       track('ocr','pending','OCR-FILTROS','Búsqueda avanzada abierta',ocrTime);
@@ -597,13 +607,13 @@ async function tick(){
       progress('filtros');await showCompact('Filtros GTL');return;
     }
     const inferred=panel&&res.grid?inferGtlSexes(image,panel,res.grid):null;
-    const enrichSex=row=>{
+    const enrichRow=row=>{
       const guess=inferred?.[row.rank-1];
-      return {...row,sex:guess&&guess!=='?'?guess:
-        (String(row.species||'').toLowerCase()==='ditto'?'N':row.sex||'?')};
+      return {...row,sex:sexOf({...row,sex:guess&&guess!=='?'?guess:row.sex}),
+        variant:row.variant?variantOf(row):UNKNOWN_VARIANT};
     };
-    const rows=(res.rows||[]).map(enrichSex);
-    const partials=(res.partialRows||[]).map(enrichSex);
+    const rows=(res.rows||[]).map(enrichRow);
+    const partials=(res.partialRows||[]).map(enrichRow);
     lastOcrIncomplete=partials.length>0||rows.length===0;
     // The footer ("Mostrando 11 a 20 de 81") proves a page turn even when two
     // pages look alike (same species, same nature, only digits differ).
@@ -614,73 +624,62 @@ async function tick(){
     if(!rowsStillMatch){
       lastDisplayedRows=null;lastPageSignature='';
     }
-    diagnostics?.setOcrRows(res.diagnosticRows||[],(res.sort||'unknown')+' · '+(capture.via||'captura')+
+    const rowDetails=new Map([...rows,...partials].map(row=>[row.rank,{sex:row.sex,variant:row.variant}]));
+    diagnostics?.setOcrRows((res.diagnosticRows||[]).map(row=>({...row,...rowDetails.get(row.rank)})),
+      (res.sort||'unknown')+' · '+(capture.via||'captura')+
       (lastReadStats?' · verde '+lastReadStats.color+', plantillas '+lastReadStats.template+
         ', celdas '+lastReadStats.cellOcr+', textos '+lastReadStats.textFixed+', corregidos '+lastReadStats.corrected+
         ', dígitos aprendidos '+lastReadStats.templates+'/10'+', variantes '+(lastReadStats.variants||0):''));
     broadcast('radar:diagnostics',diagnostics?.snapshot());
-    const balance=storage.latestBalance();
-    const bargains=[];
+    const expected=res.visibleRows??10;
     emptyReads=rows.length?0:emptyReads+1;
-    track('ocr',rows.length===10?'ok':emptyReads>=3?'error':'warn',
-      rows.length===10?'OCR-OK':rows.length?'OCR-PARCIAL':'OCR-001',
-      rows.length+'/10 completos; '+partials.length+' parciales; '+(res.wordCount||0)+
+    track('ocr',rows.length===expected?'ok':emptyReads>=3?'error':'warn',
+      rows.length===expected?'OCR-OK':rows.length?'OCR-PARCIAL':'OCR-001',
+      rows.length+'/'+expected+' completos; '+partials.length+' parciales; '+(res.wordCount||0)+
       ' palabras · detalle por fila en Diagnóstico',ocrTime);
-    stage='engine';
-    const decisions=[];
-    const options=brainOptions();
-    const sampleCache=new Map(),salesCache=new Map();
-    const samplesFor=species=>{
-      const k=String(species||'').toLowerCase();
-      if(!sampleCache.has(k))sampleCache.set(k,storage.marketSamples(species));
-      return sampleCache.get(k);
-    };
-    const pick=row=>({rank:row.rank,species:row.species,price:row.price,
-      level:row.level,nature:row.nature,ivs:row.ivs,variant:row.variant||'normal'});
-    const tagVariant=(row,ev)=>row.variant&&row.variant!=='normal'&&ev.reasonText?
-      {...ev,reasonText:row.variant.toUpperCase().replace('+',' + ')+' · '+ev.reasonText}:ev;
-    for(const row of rows){
-      const ev0=assess({...row,fingerprint:identity(row)},samplesFor(row.species),
-        {...options,lineSamples:lineSamplesFor(row.species,sampleCache),
-          sales:salesCache.get(row.species)??salesCache.set(row.species,storage.salesFor(row.species)).get(row.species)});
-      const ev=tagVariant(row,ev0);
-      decisions.push({...pick(row),...ev});
-    }
-    // Incomplete rows stay pending, except for clear budget exclusions.
-    for(const row of partials){
-      if(decisions.some(d=>d.rank===row.rank))continue;
-      const ev=row.priceReliable&&Number.isSafeInteger(row.price)?
-        assess(row,[],options):{decision:'SILENCIO',reason:'LECTURA_INCOMPLETA',reasonText:'Lectura incompleta',score:null};
-      decisions.push({...pick(row),...ev});
-    }
-    const actionable=decisions.filter(d=>d.decision!=='SILENCIO').length;
-    if(sessionKind!=='learn')for(const d of decisions)if(d.decision==='COMPRAR')bargains.push(d);
-    track('engine',balance===null?'warn':'ok',balance===null?'ECO-001':'ECO-OK',
-      balance===null?'Saldo no reconocido; puntuación IV disponible':
-        'Evaluadas '+rows.length+' ofertas; '+actionable+' decisiones');
     stage='database';
     const context=(res.context||'general')+'|'+(res.sort||'unknown');
     const saved=storage.recordMarketScan({
       rows,partialRows:partials,context,sort:res.sort||'unknown',
       page:res.page??null,wordCount:res.wordCount||0,imageHash:fp
     });
+    stage='engine';
+    const decisions=[];
+    const hunting=sessionKind==='hunt';
+    if(hunting){
+      const options=brainOptions();
+      const evidence=new Map();
+      for(const row of rows){
+        const key=row.species.toLowerCase();
+        if(!evidence.has(key))evidence.set(key,{samples:storage.marketSamples(row.species),sales:storage.salesFor(row.species)});
+        const {samples,sales}=evidence.get(key);
+        const offer={...row,fingerprint:identity(row)};
+        decisions.push({...offer,...assess(offer,samples,{...options,sales})});
+      }
+      for(const row of partials){
+        const ev=row.priceReliable?assess(row,[],options):
+          {decision:'SILENCIO',reason:'LECTURA_INCOMPLETA',reasonText:'Lectura incompleta',score:null};
+        decisions.push({...row,...ev});
+      }
+      track('engine',options.balance===null?'warn':'ok',options.balance===null?'ECO-001':'ECO-OK',
+        options.balance===null?'Saldo por confirmar':'Evaluadas '+rows.length+' ofertas');
+    }
+    const bargainCount=decisions.filter(d=>d.decision==='COMPRAR').length;
+    stage='database';
     if(!saved.duplicate){
       diagnostics?.scan(rows.length,saved.saved);
       track('database','ok','DB-OK',
         saved.saved+' anuncios y '+saved.partial+' parciales almacenados');
-      for(const row of rows){
-        const ev=decisions.find(d=>d.rank===row.rank);
-        if(sessionKind!=='learn'&&ev?.decision&&ev.decision!=='SILENCIO')
-          storage.recordRecommendation(row,ev,context);
-      }
+      for(const d of decisions)if(d.fingerprint&&d.decision!=='SILENCIO')storage.recordRecommendation(d,d,context);
       publishData(true);
     }else track('database','ok','DB-OK','Captura repetida; sin duplicar anuncios');
     if(!sessionActive||version!==sessionVersion)return;
     // Check for a material page change without comparing PNG bytes; identical
     // offers may have small hover/timer animations while OCR is running.
-    if(decisions.length && Date.now()-now > 1500 && !String(capture.via||'').startsWith('win-')){
+    if((rows.length||partials.length) && Date.now()-now > 1500 && !String(capture.via||'').startsWith('win-')){
       stage='capture';
       const fresh=await getGameSource(true);
+      if(!sessionActive||version!==sessionVersion)return;
       if(!fresh?.image)return;
       const bounds=fresh.image.getSize();
       const freshPanel=locateGtlPanel(fresh.image);
@@ -690,16 +689,11 @@ async function tick(){
         progress('esperando');await showCompact('GTL oculto');
         return;
       }
-      const freshRect={
-        x:freshPanel.x,y:freshPanel.y+Math.round(freshPanel.width*.132),
-        width:freshPanel.width,
-        height:Math.min(bounds.height-freshPanel.y-Math.round(freshPanel.width*.132),
-          Math.round(freshPanel.width*.48))
-      };
+      const freshRect=marketRegion(bounds,freshPanel);
       if(freshRect.height<=0)return;
       const freshMarket=fresh.image.crop(freshRect);
       const sameSource=(fresh.via||'')===(capture.via||'')&&freshRect.width===rect.width&&freshRect.height===rect.height;
-      if(sameSource&&materiallyDifferent(marketImage,freshMarket)){
+      if(sameSource&&materiallyDifferent(marketImage,freshMarket,.008,true)){
         diagnostics?.markOcrStale();
         tableHash='';lastTableCheckedAt=0;
         lastPageSignature='';lastDisplayedRows=null;
@@ -711,11 +705,16 @@ async function tick(){
     // Rows that physically exist on this page (a short last page has fewer).
     const existing=new Set((res.diagnosticRows||[]).filter(r=>r.state!=='empty').map(r=>r.rank));
     let shown=decisions;
+    let advancedMission=false;
     if(sessionKind==='learn'&&learner){
       // Learning never buys: labels say whether each row counts for the mission.
-      const visible=[...rows,...partials];
-      if(learner.observe(visible,{pageInfo:res.pageInfo})){lastPageSignature='';try{require('electron').shell.beep();}catch{}}
-      shown=learner.labels(visible);
+      const visible=[...rows.map(row=>({...row,lastSeen:now})),...partials];
+      advancedMission=learner.observe(visible,{pageInfo:res.pageInfo,searchSpecies:res.searchSpecies,sort:res.sort});
+      if(advancedMission){
+        lastDisplayedRows=null;lastPageSignature='';
+        try{require('electron').shell.beep();}catch{}
+      }
+      shown=advancedMission?[]:learner.labels(visible);
       publishLearn();
     }
     stage='overlay';
@@ -732,17 +731,18 @@ async function tick(){
       }
       for(const rank of [...current.keys()])if(!existing.has(rank))current.delete(rank);
       await showResults([...current.values()].sort((a,b)=>a.rank-b.rank),version,res.layout||lastDisplayedLayout);
-    }
-    rememberSeen([...rows,...partials],decisions);
+    }else await showCompact();
+    rememberSeen(rows,decisions);
     const near=sessionKind==='hunt'?trackNear(decisions):[];
     const readMs=Math.round(performance.now()-ocrStart);
     readAvgMs=readAvgMs===null?readMs:Math.round(readAvgMs*.7+readMs*.3);
-    lastReadAt=Date.now();lastReadRows=rows.length+partials.length;
-    readPhase.phase='';progress('listo');
+    lastReadAt=Date.now();lastReadRows=rows.length;lastVisibleRows=expected;
+    readPhase.phase='';progress(advancedMission?'mision':rows.length?'listo':'sin-filas');
+    const mission=learnView();
     setStatus({state:'activo',
-      message:rows.length+'/10 leídos · '+saved.saved+' guardados'+
-        (sessionKind==='learn'?' · aprendiendo':bargains.length?' · ¡'+bargains.length+' ganga'+(bargains.length>1?'s':'')+'!':
-          actionable?' · '+actionable+' decisiones':' · recopilando precios'),
+      message:advancedMission?(mission?.done?'Sin misiones pendientes':'Siguiente misión · '+mission?.species):
+        rows.length+'/'+expected+' leídos'+(hunting?(bargainCount?' · Gangas: '+bargainCount:' · Sin gangas confirmadas'):
+          ' · Aprendiendo'),
       recognized:rows.length,latency:Math.round(performance.now()-start),near,trades:storage.trades()});
   }catch(error){
     if(!sessionActive||version!==sessionVersion)return;
@@ -773,35 +773,39 @@ function stopSession(){
   diagnostics?.markOcrStale();
   lastOverlayBounds='';lastPageSignature='';lastDisplayedRows=null;lastDisplayedLayout=null;lastMarketImage=null;lastOcrImage=null;lastPageFrom=null;
   overlay?.hide();
-  try{globalShortcut.unregister(NEXT_KEY);}catch{}
-  setStatus({state:'inactivo',message:'Radar detenido.',recognized:0,latency:null,learn:null,missions:[]});
+  unregisterNext();
+  learner=null;
+  setStatus({state:'inactivo',message:'Sesión detenida.',recognized:0,latency:null,learn:null,missions:[]});
 }
 async function startSession(kind='hunt'){
   kind=kind==='learn'?'learn':'hunt';
+  if(sessionActive&&kind===sessionKind)return {ok:true,running:true,kind};
+  const switching=sessionActive;
+  unregisterNext();
+  sessionKind=kind;
   if(kind==='learn'){
     learner=createLearner({profiles:PRIORITY_PROFILES,samplesFor:s=>storage.marketSamples(s),
-      skipped:storage.settings().learnSkipped||[],budget:()=>availableToSpend(storage.latestBalance())});
-    try{globalShortcut.unregister(NEXT_KEY);globalShortcut.register(NEXT_KEY,()=>nextMission());}catch{}
-  }else{learner=null;try{globalShortcut.unregister(NEXT_KEY);}catch{}}
-  const switching=sessionActive&&kind!==sessionKind;
-  sessionKind=kind;
-  if(sessionActive){
-    lastPageSignature='';publishLearn();
-    if(switching&&lastDisplayedRows)void showResults(lastDisplayedRows,sessionVersion,lastDisplayedLayout);
-    else if(switching)void showCompact();
-    return {ok:true,running:true,kind};
-  }
+      recent:storage.learningSamples(),skipped:storage.settings().learnSkipped||[],
+      budget:()=>availableToSpend(storage.latestBalance())});
+    if(learner.current())registerNext();
+  }else learner=null;
   sessionActive=true;sessionVersion++;startedAt=Date.now();
-  mode='idle';headerHash='';tableHash='';lastHeaderCheckedAt=0;lastTableCheckedAt=0;lastBalanceReadAt=0;emptyReads=0;
+  if(!switching){mode='idle';headerHash='';lastHeaderCheckedAt=0;lastBalanceReadAt=0;}
+  tableHash='';lastTableCheckedAt=0;emptyReads=0;lastPageFrom=null;
   lastPageSignature='';lastDisplayedRows=null;lastDisplayedLayout=null;lastMarketImage=null;lastOcrImage=null;
-  setStatus({state:'esperando',message:'Buscando pantalla de PokéMMO...',recognized:0,latency:null});
+  readPhase={phase:'idle',since:0};lastReadAt=0;lastReadRows=0;lastVisibleRows=0;
+  progress('esperando');
+  setStatus({state:'esperando',message:switching?'Preparando lectura del GTL':'Buscando pantalla de PokéMMO...',
+    recognized:0,latency:null});
   publishLearn();
-  track('window','pending','WIN-000','Buscando PokéMMO');
-  track('capture','pending','CAP-000','Esperando imagen');
+  if(!switching){
+    track('window','pending','WIN-000','Buscando PokéMMO');
+    track('capture','pending','CAP-000','Esperando imagen');
+  }
   // Passive overlay: never intercepts game clicks or keyboard focus.
   void showCompact();
   schedule(0);
-  return {ok:true,running:true};
+  return {ok:true,running:true,kind};
 }
 function handlers(){
   ipcMain.handle('radar:getState',()=>{
@@ -819,9 +823,11 @@ function handlers(){
   // Manual purchase (when the automatic detection missed it).
   ipcMain.handle('radar:addTrade',(_e,t)=>{
     const ivs=String(t?.ivs||'').split(/[\/,\s]+/).filter(Boolean).map(Number);
+    const marks=VARIANT_MARKS.filter(mark=>t?.[mark]===true);
     const row={species:String(t?.species||'').trim().slice(0,40),level:Number.isInteger(+t?.level)?+t.level:null,
-      nature:String(t?.nature||'').trim().toLowerCase().slice(0,20)||null,ivs:ivs.length===6&&ivs.every(v=>v>=0&&v<=31)?ivs:null,
-      price:Number(String(t?.price||'').replace(/\D/g,'')),variant:t?.alfa?'alfa':'normal'};
+      nature:String(t?.nature||'').trim().toLowerCase().slice(0,20)||null,
+      ivs:ivs.length===6&&ivs.every(v=>Number.isInteger(v)&&v>=0&&v<=31)?ivs:null,
+      price:Number(String(t?.price||'').replace(/\D/g,'')),variant:marks.join('+')||'normal',sex:t?.sex};
     if(!row.species||!Number.isSafeInteger(row.price)||row.price<=0)throw Error('Escribe al menos el Pokémon y el precio de compra');
     storage.recordPurchase(row);
     setStatus({trades:storage.trades()});

@@ -5,7 +5,7 @@ const {buildMissions,createLearner,judge,GOAL}=require('../src/learning');
 const {PRIORITY_PROFILES}=require('../src/priority-profiles');
 
 const gible=(i,extra={})=>({rank:1,species:'Gible',level:1,nature:'Alegre',sex:'F',price:9000+i,
-  ivs:[10,31,12,8,14,31],fingerprint:'g'+i,ocrReliable:true,...extra});
+  ivs:[10,31,12,8,14,31],fingerprint:'g'+i,ocrReliable:true,lastSeen:Date.now(),...extra});
 const learnerAt=(store,species)=>{
   const learner=createLearner({profiles:PRIORITY_PROFILES,samplesFor:s=>store[s.toLowerCase()]||[]});
   while(learner.view().species!==species)learner.next();
@@ -31,19 +31,24 @@ test('every row gets a learning label, never a buy or budget label',()=>{
   assert.match(judge(gible(1,{ivs:[10,31,12,8,14,20]}),m).text,/Velocidad/);
   assert.equal(judge(gible(1,{level:30}),m).state,'ok','any level counts');
   assert.equal(judge(gible(1,{species:'Zubat'}),m).state,'no');
-  // A partial read that already has what the mission needs counts.
   const partial=gible(2,{ivs:[null,31,null,8,14,31],ocrReliable:false,priceReliable:true,missingFields:['IV_PS','IV_DEFENSA']});
-  assert.equal(judge(partial,m).state,'ok');
+  assert.equal(judge(partial,m).state,'reading');
   assert.equal(judge(gible(3,{ivs:[10,31,12,8,14,null]}),m).state,'reading');
 });
 
-test('partial reads count once each and complete the mission',()=>{
-  const learner=learnerAt({},'Gible');
-  const page=Array.from({length:GOAL},(_,i)=>gible(i,{rank:i+1,ivs:[null,31,12,8,14,31],ocrReliable:false,priceReliable:true}));
-  learner.observe(page.slice(0,3));learner.observe(page.slice(0,3));
-  assert.equal(learner.view().got,3,'the same ads seen twice count once');
-  assert.equal(learner.labels(page.slice(0,2))[0].learn,'ok');
-  assert.equal(learner.observe(page),true);
+test('mission counts distinct stored references from a single price class',()=>{
+  const store={gible:[]};
+  const learner=learnerAt(store,'Gible');
+  const partial=gible(1,{ivs:[null,31,12,8,14,31],ocrReliable:false,priceReliable:true});
+  assert.equal(learner.observe([partial]),false);
+  assert.equal(learner.view().got,0);
+  assert.equal(learner.labels([partial])[0].learn,'reading');
+  const females=Array.from({length:GOAL},(_,i)=>gible(i));
+  store.gible=[females[0],females[0],females[1],gible(8,{sex:'M'}),gible(9,{ivs:[31,31,12,8,14,31]})];
+  assert.equal(learner.observe(store.gible),false);
+  assert.equal(learner.view().got,2,'duplicates and other classes do not fill this class');
+  store.gible.push(...females.slice(2));
+  assert.equal(learner.observe(store.gible),true);
   assert.notEqual(learner.view().species,'Gible');
 });
 
@@ -51,16 +56,34 @@ test('the last page of the search ends the mission even below the goal',()=>{
   const learner=learnerAt({},'Gible');
   const lastPage=[gible(1,{rank:1}),gible(2,{rank:2,level:40})];
   assert.equal(learner.observe(lastPage,{pageInfo:{from:21,to:22,total:22,last:false}}),false);
+  assert.equal(learner.observe(lastPage.map(row=>({...row,nature:'Modesta'})),{
+    pageInfo:{from:21,to:22,total:22,last:true}}),false);
+  assert.equal(learner.observe(lastPage,{searchSpecies:'Larvitar',pageInfo:{from:21,to:22,total:22,last:true}}),false);
+  assert.match(learner.view().filterCheck.text,/Estás buscando Larvitar/);
   assert.equal(learner.observe(lastPage,{pageInfo:{from:21,to:22,total:22,last:true}}),true);
   assert.notEqual(learner.view().species,'Gible');
 });
 
 test('missions within your budget come first',()=>{
   // Garchomp ads seen at 145.000+: with ~32.700 to spend it moves to the back.
-  const store={garchomp:[{species:'Garchomp',level:58,nature:'alegre',price:145000,ivs:[17,31,19,9,17,31],fingerprint:'g'}]};
+  const store={garchomp:[gible(1,{species:'Garchomp',level:58,price:145000})]};
   const learner=createLearner({profiles:PRIORITY_PROFILES,samplesFor:s=>store[s.toLowerCase()]||[],budget:()=>32700});
   assert.notEqual(learner.view().species,'Garchomp');
   assert.equal(learner.view().affordable,true);
   const rich=createLearner({profiles:PRIORITY_PROFILES,samplesFor:s=>store[s.toLowerCase()]||[],budget:()=>500000});
   assert.equal(rich.view().species,'Garchomp');
+});
+
+test('visible filter cells replace stale values and skipping advances the displayed position',()=>{
+  const learner=learnerAt({},'Gible');
+  learner.setFilters({nature:'alegre',ivMin1:31,ivMin5:31,ivMin0:31});
+  assert.match(learner.view().filterCheck.text,/Quita IV PS/);
+  learner.setFilters({nature:'alegre',ivMin1:31,ivMin5:31},['nature','ivMin1','ivMin5','ivMin0']);
+  const before=learner.view();
+  assert.equal(before.filterCheck.ok,true);
+  const after=learner.next();
+  assert.notEqual(after.id,before.id);
+  assert.equal(after.position,before.position+1);
+  assert.equal(after.skipped,before.skipped+1);
+  assert.equal(after.completed,before.completed);
 });

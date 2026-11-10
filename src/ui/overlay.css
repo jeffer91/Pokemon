@@ -11,9 +11,10 @@ html,body{margin:0;background:transparent;overflow:hidden}
  display:flex;flex-direction:column;justify-content:center;gap:2px;
  box-shadow:0 2px 6px #0005;border:1px solid transparent;padding:4px 7px}
 .decision-top{display:flex;align-items:center;justify-content:space-between;gap:4px;white-space:nowrap}
-.decision-top strong:first-child{font-size:13px;font-variant-numeric:tabular-nums}
+.decision-top strong:first-child{font-size:13px;font-variant-numeric:tabular-nums;min-width:0;overflow:hidden;text-overflow:ellipsis}
 .decision-top strong:last-child{font-size:10px;letter-spacing:.1px}
-.decision-reason{font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.decision-reason,.decision-meta{font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.decision-meta{font-size:9px;line-height:1.1;opacity:.88}
 .buy{background:#137e4ced;border-color:#70dca2;color:#fff}
 .reject{background:#b7343cec;border-color:#e9989f;color:#fff}
 .pending{background:#f0f1f3f3;border-color:#c9ced6;color:#414e5e}

@@ -114,7 +114,7 @@ function locateGtlPanelRaw(image){
 
 
 // Read the pink/blue gender glyph ONLY in its dedicated cell above the badge.
-// Never use sprite colors or the blue listing diamond below the glyph.
+// Keep clear of the blue selection border above and the diamond below.
 function inferGtlSexes(image,panel,grid){
   const sexes=Array(10).fill('?');
   if(!image||image.isEmpty()||!panel||!grid||!Number.isFinite(grid.top)||
@@ -123,10 +123,10 @@ function inferGtlSexes(image,panel,grid){
   for(let rank=0;rank<10;rank++){
     const centerY=panel.y+(grid.top+rank*grid.step)*W;
     const rect={
-      x:Math.round(panel.x+W*.019),
-      y:Math.round(centerY-W*.024),
-      width:Math.max(6,Math.round(W*.019)),
-      height:Math.max(6,Math.round(W*.018))
+      x:Math.round(panel.x+W*.020),
+      y:Math.round(centerY-W*.013),
+      width:Math.max(5,Math.round(W*.011)),
+      height:Math.max(5,Math.round(W*.011))
     };
     if(rect.x<0||rect.y<0||rect.x+rect.width>bounds.width||
       rect.y+rect.height>bounds.height)continue;
@@ -139,8 +139,9 @@ function inferGtlSexes(image,panel,grid){
       if(b>=135&&g>=100&&r<=130&&b-r>=55&&g-r>=20)male++;
       if(r>=155&&b>=110&&g<=135&&r-g>=55)female++;
     }
-    if(male>=12&&male>female*2)sexes[rank]='M';
-    else if(female>=12&&female>male*2)sexes[rank]='F';
+    const minPixels=Math.max(3,Math.round(rect.width*rect.height*.06));
+    if(male>=minPixels&&male>female*2)sexes[rank]='M';
+    else if(female>=minPixels&&female>male*2)sexes[rank]='F';
   }
   return sexes;
 }

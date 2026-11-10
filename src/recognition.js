@@ -117,11 +117,13 @@ function cleanupName(name){
 }
 // Advanced Search form: label button | value | label button | value.
 // Positions are panel units (calibrated on a 1920×1080 capture).
-const FILTER_COLUMNS=[{label:[.03,.30],value:[.30,.47]},{label:[.49,.74],value:[.74,.95]}];
+const FILTER_COLUMNS=[{label:[.03,.30],value:[.30,.47],number:[.35,.42]},
+  {label:[.49,.74],value:[.74,.95],number:[.80,.89]}];
 function filterField(label){
   const s=normalized(label).replace(/[^a-z]/g,'');
   if(!s)return null;
   if(s.includes('naturaleza'))return 'nature';
+  if(s==='sexo')return 'sex';
   if(s.includes('coincidencias'))return 'matches';
   const bound=s.endsWith('max')?'Max':s.endsWith('min')||s.endsWith('minimas')?'Min':null;
   if(!bound||/ev/.test(s.replace(/nivel|velocidad|especial|defensa/g,'')))return null;
@@ -145,14 +147,21 @@ function parseFilters(words){
    for(const [k,col] of FILTER_COLUMNS.entries()){
     const field=fields[k];
     if(!field)continue;
-    cells[field]={x:col.value,y:line.y};
-    const raw=join(fieldWords(line.words,col.value[0],col.value[1],0,1).filter(w=>!/^[-+=—–]+\.?$/.test(w.text)));
+    const column=field==='nature'||field==='sex'?col.value:col.number;
+    cells[field]={x:column,y:line.y};
+    const raw=join(fieldWords(line.words,...column,0,1));
     if(field==='nature'){
       const n=normalized(raw).replace(/[^a-z]/g,'');
-      out.nature=n?(fuzzyNature(n)||n):null;
+      if(n||raw)out.nature=n?(fuzzyNature(n)||n):null;
+    }else if(field==='sex'){
+      const s=normalized(raw);
+      if(/hembra|♀/.test(s))out.sex='F';
+      else if(/macho|♂/.test(s))out.sex='M';
+      else if(raw)out.sex=null;
     }else{
       const digits=raw.replace(/\D/g,'');
-      if(digits)out[field]=Number(digits);
+      const max=field.startsWith('iv')?31:field==='matches'?6:100;
+      if(digits&&Number(digits)<=max)out[field]=Number(digits);
       else if(/^[-—–=\s]*$/.test(raw)&&raw)out[field]=null;
     }
    }
@@ -170,7 +179,7 @@ function parseScreen(data,width,height,options={}) {
     words=words.map(w=>({
       ...w,x:(rect.x+w.x*(rect.width||width)-panel.x)/panel.width,
       y:(rect.y+w.y*(rect.height||height)-panel.y)/panel.width
-    })).filter(w=>w.x>=0&&w.x<=1.02&&w.y>=.08&&w.y<=.68);
+    })).filter(w=>w.x>=0&&w.x<=1.02&&w.y>=.055&&w.y<=.68);
   }else if(rect){
     words=words.map(w=>({...w,x:(rect.x+w.x*(rect.width||width))/rect.fullWidth,
       y:(rect.y+w.y*(rect.height||height))/rect.fullHeight}));
@@ -184,20 +193,23 @@ function parseScreen(data,width,height,options={}) {
   const advanced=gtl && (all.includes('precio minimo')||all.includes('coincidencias de iv')||
     all.includes('ocultar ditto')||all.includes('nivel min')||all.includes('habilidad oculta')||all.includes('iv ataque min')||
     all.includes('coincidencias de iv')||all.includes('iv ps max'));
-  const context=isPanel?'gtl-panel':
+  const searchSpecies=isPanel&&!advanced?join(fieldWords(words,.31,.593,.061,.097))||null:null;
+  const context=isPanel?searchSpecies||'gtl-panel':
     normalized(join(fieldWords(words,.20,.80,.19,.25))).slice(0,180)||'general';
-  const isOld=all.includes('mas viejo'),isNew=all.includes('mas nuevo');
+  const order=isPanel?normalized(join(fieldWords(words,.81,.984,.061,.097))):all;
+  const sort=order.includes('menor precio')?'price':order.includes('mayor precio')?'price-desc':
+    order.includes('mas viejo')?'oldest':order.includes('mas nuevo')?'newest':'unknown';
   const balanceArea=isPanel?'':join(fieldWords(words,0,.13,.05,.13));
   const balanceMatch=balanceArea.match(/\$\s*([\d.,]+)/);
   const balance=balanceMatch?parseMoney(balanceMatch[1]):null;
   // "Mostrando 21 a 22 de 22 anuncios": tells the page and whether it is the last.
-  const footer=all.match(/mostrando\s+(\d+)\s*a\s*(\d+)\s*de\s*([\d.,]+)/);
+  const footer=all.match(/mostrando\s+(\d+)\s*a\s*(\d+)\s*de\s*([\d.,]+)\s*(\+)?/);
   const pageInfo=footer?{from:Number(footer[1]),to:Number(footer[2]),
     total:Number(footer[3].replace(/[.,]/g,''))}:null;
-  if(pageInfo)pageInfo.last=pageInfo.to>=pageInfo.total;
+  if(pageInfo)pageInfo.last=!footer[4]&&pageInfo.to>=pageInfo.total;
   const footerWord=words.find(w=>normalized(w.text)==='mostrando');
-  const base={gtl,advanced,context,sort:isOld?'oldest':isNew?'newest':'unknown',
-    balance,page:null,pageInfo,footerY:footerWord?footerWord.y:null,wordCount:words.length};
+  const base={gtl,advanced,context,searchSpecies,sort,balance,
+    page:pageInfo?Math.ceil(pageInfo.from/10):null,pageInfo,footerY:footerWord?footerWord.y:null,wordCount:words.length};
   // "Tus Anuncios": the state column (Activo/Expirado/Vendido) never appears
   // in the market. Button labels ("Cancelar") are not always read on short pages.
   const stateWords=words.filter(w=>/^(activo|expirado|vendido|terminado)$/.test(normalized(w.text))).length;

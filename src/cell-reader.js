@@ -5,7 +5,7 @@
 //    shape of each digit; later cells are matched in microseconds.
 // 3) Whatever is still unknown is sent to a tiny digits-only OCR (main.js).
 // All pixel buffers stay in memory; only small digit features are persisted.
-const {validListing}=require('./market');
+const {validListing,UNKNOWN_VARIANT}=require('./market');
 
 const IV_FIELDS=['IV_PS','IV_ATAQUE','IV_DEFENSA','IV_ATAQUE_ESP','IV_DEFENSA_ESP','IV_VELOCIDAD'];
 const GRID_W=6,GRID_H=9;
@@ -132,7 +132,8 @@ function cellRect(cells,img,rank,j){
 // Alfa: dark-red outline around the sprite, ≈ rgb(192,20,29).
 // Yellow star top-right (Variocolor) and cyan four-point sparkle (Partículas).
 const isAlphaRed=p=>p.r>=120&&p.g<=40&&p.b<=40;
-const isStarYellow=p=>p.r>=220&&p.g>=190&&p.b<=90;
+// The multi-star badge uses a paler gold than the single star.
+const isStarYellow=p=>p.r>=220&&p.g>=185&&p.b<=125;
 const isSparkleCyan=p=>p.r<=120&&p.g>=190&&p.b>=170;
 function zoneRect(cells,img,rank,[x0,x1],[top,bottom]){
   const {panel,crop}=cells;
@@ -150,11 +151,16 @@ function share(bitmap,width,r,test){
 function detectVariant(cells,img,rank){
   // Sprite zone excludes the sex / hidden-ability icons on the left.
   const sprite=zoneRect(cells,img,rank,[.035,.090],[-.017,.017]);
-  const star=zoneRect(cells,img,rank,[.062,.090],[-.017,.002]);
+  // Keep the badge column separate from the sprite. A particle sits below
+  // the star when both badges are present, or in the upper slot by itself.
+  const upper=zoneRect(cells,img,rank,[.070,.084],[-.018,.001]);
+  const lower=zoneRect(cells,img,rank,[.070,.084],[.001,.018]);
+  if(!sprite||!upper||!lower)return UNKNOWN_VARIANT;
   const tags=[];
   if(share(img.bitmap,img.width,sprite,isAlphaRed)>=.015)tags.push('alfa');
-  if(share(img.bitmap,img.width,star,isStarYellow)>=.012)tags.push('variocolor');
-  if(share(img.bitmap,img.width,star,isSparkleCyan)>=.012)tags.push('particulas');
+  if(share(img.bitmap,img.width,upper,isStarYellow)>=.036)tags.push('variocolor');
+  if(Math.max(share(img.bitmap,img.width,upper,isSparkleCyan),
+    share(img.bitmap,img.width,lower,isSparkleCyan))>=.03)tags.push('particulas');
   return tags.length?tags.join('+'):'normal';
 }
 
@@ -233,7 +239,7 @@ function refineScan(parsed,img,book=createDigitBook()){
   const info=new Map();
   let anyGreen=false;
   for(const e of entries)e.variant=detectVariant(cells,img,e.rank);
-  stats.variants=entries.filter(e=>e.variant!=='normal').length;
+  stats.variants=entries.filter(e=>e.variant!=='normal'&&e.variant!==UNKNOWN_VARIANT).length;
   for(const e of entries)for(let j=0;j<6;j++){
     const rect=cellRect(cells,img,e.rank,j);
     const c=classifyCell(img.bitmap,img.width,img.height,rect);

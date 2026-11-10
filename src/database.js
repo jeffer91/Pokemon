@@ -3,7 +3,7 @@ const { DatabaseSync, backup } = require('node:sqlite');
 const path = require('node:path');
 const fs = require('node:fs');
 const crypto = require('node:crypto');
-const {validListing, researchSuggestions} = require('./market');
+const {validListing,researchSuggestions,identity,sexOf,variantOf}=require('./market');
 const {validateOverrides,priceSummary,matchProfile}=require('./team');
 const {CATALOG,validateCatalog}=require('./catalog');
 const {suggestedSearches}=require('./research');
@@ -12,14 +12,13 @@ const {TEAM}=require('./team');
 
 const DEFAULT_SETTINGS = {listingFee:null, captureEnabled:false, reserveRatio:0.30,
   overlayX:0, overlayY:0, overlayScale:1, consentConfirmed:false, captureEngine:null, teamOverrides:{}, learnSkipped:[]};
-function identity(p) { return crypto.createHash('sha256').update(JSON.stringify([p.species.toLowerCase(),p.level,p.nature.toLowerCase(),p.sex||'?',p.price,...p.ivs])).digest('hex'); }
 function openDatabase(folder) {
   fs.mkdirSync(folder,{recursive:true});
   const filename=path.join(folder,'pokeradar.sqlite');
   const db = new DatabaseSync(filename);
   db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=3000;');
   const version=db.prepare('PRAGMA user_version').get().user_version;
-  if(version > 7) throw new Error('Esta base requiere una versión más reciente de PokéRadar.');
+  if(version > 8) throw new Error('Esta base requiere una versión más reciente de PokéRadar.');
   if(version < 1) {
     db.exec(`BEGIN IMMEDIATE;
       CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -120,6 +119,16 @@ function openDatabase(folder) {
   if(db.prepare('PRAGMA user_version').get().user_version < 7){
     db.exec(`ALTER TABLE listings ADD COLUMN variant TEXT NOT NULL DEFAULT 'normal'; PRAGMA user_version=7;`);
   }
+  if(version<8){
+    // Keep old observations and their foreign keys. Their variant could
+    // have been merged with a different one, so use fresh reads for pricing.
+    db.exec('BEGIN IMMEDIATE');
+    try{
+      db.exec(`ALTER TABLE listings ADD COLUMN classification_checked INTEGER NOT NULL DEFAULT 0;
+        PRAGMA user_version=8;`);
+      db.exec('COMMIT');
+    }catch(error){db.exec('ROLLBACK');throw error;}
+  }
   const priorityInsert=db.prepare(`INSERT INTO competitive_profiles(id,name,version,profile_json,updated_at)
     VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET
     name=excluded.name,version=excluded.version,profile_json=excluded.profile_json,
@@ -169,22 +178,27 @@ function openDatabase(folder) {
     id INTEGER PRIMARY KEY AUTOINCREMENT, species TEXT NOT NULL, level INTEGER, nature TEXT,
     ivs_json TEXT, buy_price INTEGER NOT NULL, bought_at INTEGER NOT NULL, score REAL,
     listing_key TEXT, listed_price INTEGER, listed_at INTEGER,
-    sold_price INTEGER, closed_at INTEGER, state TEXT NOT NULL DEFAULT 'comprado', net INTEGER)`);
-  if(!db.prepare('PRAGMA table_info(trades)').all().some(c=>c.name==='variant'))
+    sold_price INTEGER, closed_at INTEGER, state TEXT NOT NULL DEFAULT 'comprado', net INTEGER,
+    variant TEXT NOT NULL DEFAULT 'normal', sex TEXT NOT NULL DEFAULT '?')`);
+  const tradeColumns=db.prepare('PRAGMA table_info(trades)').all().map(c=>c.name);
+  if(!tradeColumns.includes('variant'))
     db.exec(`ALTER TABLE trades ADD COLUMN variant TEXT NOT NULL DEFAULT 'normal'`);
+  if(!tradeColumns.includes('sex'))
+    db.exec(`ALTER TABLE trades ADD COLUMN sex TEXT NOT NULL DEFAULT '?'`);
   const TRADE_FEE=1000;
   // A balance drop equal to a price seen in the last 30 min = that purchase.
   // Persistent: survives app restarts (the in-memory list did not).
   function recentByPrice(price,now=Date.now()){
-    const r=db.prepare(`SELECT fingerprint,species,level,nature,sex,price,ivs_json,variant,last_seen FROM listings
-      WHERE price=? AND last_seen>=? ORDER BY last_seen DESC LIMIT 1`).get(price,now-30*60_000);
-    return r?{...r,ivs:JSON.parse(r.ivs_json)}:null;
+    const rows=db.prepare(`SELECT fingerprint,species,level,nature,sex,price,ivs_json,variant,last_seen FROM listings
+      WHERE price=? AND last_seen>=? AND classification_checked=1 AND sex!='?' AND variant!='desconocida'
+      ORDER BY last_seen DESC LIMIT 2`).all(price,now-30*60_000);
+    return rows.length===1?{...rows[0],ivs:JSON.parse(rows[0].ivs_json)}:null;
   }
   function recordPurchase(row,{score=null,at=Date.now()}={}){
     if(!row||typeof row.species!=='string'||!Number.isSafeInteger(row.price)||row.price<=0)return null;
-    const r=db.prepare(`INSERT INTO trades(species,level,nature,ivs_json,buy_price,bought_at,score,variant)
-      VALUES(?,?,?,?,?,?,?,?)`).run(row.species,Number.isInteger(row.level)?row.level:null,row.nature||null,
-      JSON.stringify(row.ivs||null),row.price,at,Number.isFinite(score)?score:null,row.variant||'normal');
+    const r=db.prepare(`INSERT INTO trades(species,level,nature,ivs_json,buy_price,bought_at,score,variant,sex)
+      VALUES(?,?,?,?,?,?,?,?,?)`).run(row.species,Number.isInteger(row.level)?row.level:null,row.nature||null,
+      JSON.stringify(row.ivs||null),row.price,at,Number.isFinite(score)?score:null,variantOf(row),sexOf(row));
     db.prepare(`INSERT INTO transactions(fingerprint,species,kind,price,fee,occurred_at,note)
       VALUES(?,?,'BUY',?,0,?,'detectado por saldo')`).run(row.fingerprint||null,row.species,row.price,at);
     return Number(r.lastInsertRowid);
@@ -200,9 +214,10 @@ function openDatabase(folder) {
       const key=JSON.stringify([row.species.toLowerCase(),row.level,row.price]);
       let trade=open.find(t=>t.listing_key===key);
       if(!trade){
-        trade=open.find(t=>!t.listing_key&&!used.has(key)&&t.species.toLowerCase()===row.species.toLowerCase()&&
+        const matches=open.filter(t=>!t.listing_key&&!used.has(key)&&t.species.toLowerCase()===row.species.toLowerCase()&&
           (t.level===null||t.level===row.level));
-        if(!trade)continue;
+        if(matches.length!==1)continue;
+        trade=matches[0];
         db.prepare(`UPDATE trades SET listing_key=?,listed_price=?,listed_at=?,state='en_venta' WHERE id=?`)
           .run(key,row.price,now,trade.id);
         trade.listing_key=key;used.add(key);changes.push({id:trade.id,state:'en_venta'});
@@ -227,7 +242,7 @@ function openDatabase(folder) {
   }
   // Real sales are the best resale evidence the brain can get.
   function salesFor(species){
-    return db.prepare(`SELECT species,level,nature,ivs_json,sold_price price,closed_at FROM trades
+    return db.prepare(`SELECT species,level,nature,ivs_json,sold_price price,closed_at,variant,sex FROM trades
       WHERE state='vendido' AND species=? COLLATE NOCASE ORDER BY closed_at DESC LIMIT 50`).all(String(species||''))
       .map(r=>({...r,ivs:JSON.parse(r.ivs_json||'null'),lastSeen:r.closed_at,sold:true}));
   }
@@ -258,10 +273,9 @@ function openDatabase(folder) {
     }
     return current;
   };
-  const addListing=db.prepare(`INSERT INTO listings(fingerprint,species,level,nature,sex,price,ivs_json,first_seen,last_seen,seen_count,last_age_label,variant)
-    VALUES(?,?,?,?,?,?,?,?,?,1,?,?) ON CONFLICT(fingerprint) DO UPDATE SET last_seen=excluded.last_seen,
-    seen_count=seen_count+1,last_age_label=excluded.last_age_label,
-    variant=CASE WHEN excluded.variant!='normal' THEN excluded.variant ELSE variant END`);
+  const addListing=db.prepare(`INSERT INTO listings(fingerprint,species,level,nature,sex,price,ivs_json,first_seen,last_seen,seen_count,last_age_label,variant,classification_checked)
+    VALUES(?,?,?,?,?,?,?,?,?,1,?,?,1) ON CONFLICT(fingerprint) DO UPDATE SET last_seen=excluded.last_seen,
+    seen_count=seen_count+1,last_age_label=excluded.last_age_label,classification_checked=1`);
   const addObservation=db.prepare(`INSERT OR IGNORE INTO observations(fingerprint,seen_at,search_context,page_number,rank_number)
     VALUES(?,?,?,?,?)`);
   let lastScanKey=''; let lastScanTime=0;
@@ -273,7 +287,7 @@ function openDatabase(folder) {
     try{
       for(let i=0;i<valid.length;i++) {
         const p=valid[i],fp=identity(p); const tm=now;
-        addListing.run(fp,p.species,p.level,p.nature,p.sex||null,p.price,JSON.stringify(p.ivs),tm,tm,p.age||null,p.variant||'normal');
+        addListing.run(fp,p.species,p.level,p.nature,sexOf(p),p.price,JSON.stringify(p.ivs),tm,tm,p.age||null,variantOf(p));
         addObservation.run(fp,tm,String(context).slice(0,500),page,i+1);
       }
       db.exec('COMMIT');lastScanKey=scanKey;lastScanTime=now;return valid.length;
@@ -297,15 +311,15 @@ function openDatabase(folder) {
         valid.length,acceptedPartials.length,Math.max(0,Math.trunc(wordCount||0)));
       for(const row of valid){
         const fp=identity(row);
-        addListing.run(fp,row.species,row.level,row.nature,row.sex||null,row.price,JSON.stringify(row.ivs),
-          now,now,String(row.age||'').slice(0,50),row.variant||'normal');
+        addListing.run(fp,row.species,row.level,row.nature,sexOf(row),row.price,JSON.stringify(row.ivs),
+          now,now,String(row.age||'').slice(0,50),variantOf(row));
         addObservation.run(fp,now,String(context).slice(0,500),Number.isSafeInteger(page)?page:null,row.rank||null);
-        // Two independent, well-formed reads are required before price comparisons.
+        // Keep the independent verification flag for the price catalog.
         if(row.ocrReliable===true)confirmListing.run(fp);
       }
       for(const item of acceptedPartials){
         const fields={species:item.species||null,level:item.level??null,nature:item.nature||null,
-          price:item.price??null,ivs:item.ivs||[],sex:item.sex||'?',rank:item.rank,
+          price:item.price??null,ivs:item.ivs||[],sex:sexOf(item),variant:variantOf(item),rank:item.rank,
           missingFields:(item.missingFields||[item.missing||'ILEGIBLE']).slice(0,9)};
         addPartial.run(batch.lastInsertRowid,item.rank,String(item.missing||'ILEGIBLE').slice(0,40),
           JSON.stringify(fields).slice(0,800));
@@ -319,18 +333,19 @@ function openDatabase(folder) {
     return db.prepare('SELECT * FROM listings WHERE verified=1 AND lower(species)=lower(?) AND last_seen >= ? ORDER BY last_seen DESC LIMIT 250')
       .all(species,Date.now()-7*86_400_000).map(r=>({...r, ivs:JSON.parse(r.ivs_json),lastSeen:r.last_seen}));
   }
-  // Every well-formed OCR listing of the species (verified or not) for the
-  // class-based resale estimate. Each fingerprint is one distinct ad.
-  const samplesQuery=db.prepare(`SELECT fingerprint,species,level,nature,sex,price,ivs_json,first_seen,last_seen,verified,variant
-    FROM listings WHERE species=? COLLATE NOCASE AND last_seen>=? ORDER BY last_seen DESC LIMIT 600`);
-  // Every recent ad (species, IVs, price) to learn how price grows per 31.
-  const recentPricesQuery=db.prepare(`SELECT species,ivs_json,price FROM listings WHERE last_seen>=? ORDER BY last_seen DESC LIMIT 8000`);
-  function recentPrices(now=Date.now()){
-    return recentPricesQuery.all(now-7*86_400_000).map(r=>({species:r.species,price:r.price,ivs:JSON.parse(r.ivs_json)}));
-  }
+  const marketRow=r=>({...r,ivs:JSON.parse(r.ivs_json),lastSeen:r.last_seen,firstSeen:r.first_seen,age:r.last_age_label});
+  const marketColumns='fingerprint,species,level,nature,sex,price,ivs_json,first_seen,last_seen,last_age_label,verified,variant';
+  const samplesQuery=db.prepare(`SELECT ${marketColumns}
+    FROM listings WHERE classification_checked=1 AND species=? COLLATE NOCASE AND last_seen>=?
+    AND sex!='?' AND variant!='desconocida'
+    ORDER BY last_seen DESC LIMIT 600`);
   function marketSamples(species,now=Date.now()){
-    return samplesQuery.all(String(species||''),now-7*86_400_000)
-      .map(r=>({...r,ivs:JSON.parse(r.ivs_json),lastSeen:r.last_seen,firstSeen:r.first_seen}));
+    return samplesQuery.all(String(species||''),now-7*86_400_000).map(marketRow);
+  }
+  const learningQuery=db.prepare(`SELECT ${marketColumns} FROM listings WHERE classification_checked=1
+    AND last_seen>=? ORDER BY last_seen DESC LIMIT 250`);
+  function learningSamples(now=Date.now()){
+    return learningQuery.all(now-86_400_000).map(marketRow);
   }
   const recentDecision=db.prepare(`SELECT timestamp FROM recommendations
     WHERE fingerprint=? AND decision=? AND reason=? ORDER BY id DESC LIMIT 1`);
@@ -355,10 +370,10 @@ function openDatabase(folder) {
     return row && Date.now()-row.seen_at<=maxAge?row.amount:null;
   }
   const pricesForSpecies=db.prepare(`SELECT species,level,nature,sex,price,ivs_json,last_seen,seen_count,verified
-    FROM listings WHERE species=? COLLATE NOCASE AND last_seen>=?
+    FROM listings WHERE species=? COLLATE NOCASE AND last_seen>=? AND variant='normal'
     ORDER BY last_seen DESC LIMIT 500`);
   const marketRows=db.prepare(`SELECT species,level,nature,sex,price,ivs_json,last_seen,seen_count,verified
-    FROM listings WHERE last_seen>=? ORDER BY last_seen DESC LIMIT 2500`);
+    FROM listings WHERE last_seen>=? AND variant='normal' ORDER BY last_seen DESC LIMIT 2500`);
   function marketIntelligence(options={}){
     const rows=marketRows.all(Date.now()-7*86400000).map(r=>({
       ...r,ivs:JSON.parse(r.ivs_json),lastSeen:r.last_seen
@@ -373,7 +388,7 @@ function openDatabase(folder) {
     // Comparable only if species, level (when breeding from base), nature
     // and each required IV match. Ability remains unverified by OCR.
     const records=db.prepare(`SELECT lower(species) AS species, nature,level,price,ivs_json,verified
-      FROM listings WHERE last_seen>=? ORDER BY last_seen DESC LIMIT 5000`)
+      FROM listings WHERE last_seen>=? AND variant='normal' ORDER BY last_seen DESC LIMIT 5000`)
       .all(Date.now()-7*86400000);
     const grouped=new Map();
     for(const item of records){
@@ -465,8 +480,8 @@ function openDatabase(folder) {
         historicalQuote:profile.historicalQuote||null};
     });
   }
-  function recent() {return db.prepare('SELECT species,level,nature,sex,price,ivs_json,last_seen,seen_count,verified FROM listings ORDER BY last_seen DESC LIMIT 30').all()
-    .map(r=>({...r,ivs:JSON.parse(r.ivs_json)}));}
+  function recent() {return db.prepare(`SELECT ${marketColumns},classification_checked FROM listings ORDER BY last_seen DESC LIMIT 30`).all()
+    .map(marketRow);}
   function history(){return db.prepare(`SELECT r.decision,r.reason,r.confidence,r.estimated_net,
     r.baseline,r.timestamp,l.species,l.level,l.price,l.verified
     FROM recommendations r LEFT JOIN listings l ON l.fingerprint=r.fingerprint
@@ -495,7 +510,7 @@ function openDatabase(folder) {
   async function saveBackup(){const dest=path.join(folder,'backups');fs.mkdirSync(dest,{recursive:true});
     const file=path.join(dest,`pokeradar-${new Date().toISOString().slice(0,10)}.sqlite`);
     if(!fs.existsSync(file)) await backup(db,file);return file;}
-  return {db,filename,recentByPrice,recordPurchase,linkOwnListings,trades,salesFor,recordOwnListings,ownListings,settings:getSettings,applySettings,recordListings,recordMarketScan,candidates,marketSamples,recentPrices,targetPrices,marketIntelligence,catalogProfiles,recordRecommendation,
+  return {db,filename,recentByPrice,recordPurchase,linkOwnListings,trades,salesFor,recordOwnListings,ownListings,settings:getSettings,applySettings,recordListings,recordMarketScan,candidates,marketSamples,learningSamples,targetPrices,marketIntelligence,catalogProfiles,recordRecommendation,
     recordBalance,latestBalance,recent,history,stats,summary,addTransaction,transactionHistory,saveBackup,
     competitiveProfiles,projects,createProject,updateProject,close:()=>db.close()};
 }

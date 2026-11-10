@@ -59,9 +59,9 @@ test('budget and missing data are explained, never guessed',()=>{
   const peers=[22000,24000,25000].map((p,i)=>gible(p,undefined,{fingerprint:'b'+i}));
   assert.equal(assess(gible(9000),peers,{...opts,balance:10000}).reason,'RESERVA_30_POR_CIENTO');
   const empty=assess(gible(9000),[],opts);
-  assert.equal(empty.decision,'NO_COMPRAR');
+  assert.equal(empty.decision,'POR_VERIFICAR');
   assert.equal(empty.reason,'MUESTRA_INSUFICIENTE');
-  assert.equal(empty.score,3.5);
+  assert.equal(empty.score,null);
   assert.equal(assess(gible(9000),peers,{...opts,balance:null}).reason,'SALDO_NO_CONFIRMADO');
   assert.equal(dealScore(500),0);
   assert.equal(dealScore(10000),5.5);
@@ -81,14 +81,14 @@ test('junk is rejected at once, without waiting for prices',()=>{
   const r=assess({species:'Duskull',level:40,nature:'placida',sex:'M',price:1300,ivs:[30,10,2,27,13,11]},[],opts);
   assert.equal(r.decision,'NO_COMPRAR');
   assert.equal(r.reason,'SIN_VALOR');
-  assert.equal(r.reasonText,'Sin valor de reventa');
+  assert.equal(r.reasonText,'Bajo potencial por IV y naturaleza');
 });
 
 test('rough estimates never recommend a buy: only equal Pokémon count',()=>{
   const z=(price,ivs,f)=>({species:'Zorua',level:20,nature:'timida',sex:'M',price,ivs,lastSeen:now-1000,fingerprint:f});
   const peers=[8000,9000,10000].map((p,i)=>z(p,[31,1,2,3,4,5],'p'+i));
   const r=assess(z(4000,[31,31,31,4,5,6],'c'),peers,opts);
-  assert.equal(r.decision,'NO_COMPRAR');
+  assert.equal(r.decision,'POR_VERIFICAR');
   assert.equal(r.reason,'MUESTRA_INSUFICIENTE');
   // A base form is never bought on its evolution's prices either.
   const lit={species:'Litwick',level:1,nature:'modesta',sex:'M',price:2500,ivs:[31,1,2,31,4,31],fingerprint:'l'};
@@ -121,8 +121,8 @@ test('absurd asking prices never create a fake bargain (real Sneasel data)',()=>
   const peers=[sn(3000,'timida',[31,14,12,28,27,14],'a'),sn(150000,'serena',[31,9,26,25,1,1],'b'),
     sn(150000,'osada',[14,31,26,18,22,15],'c'),sn(160000,'serena',[23,23,31,23,27,20],'d')];
   const r=assess(sn(2500,'firme',[2,16,31,6,30,29],'x'),peers,opts);
-  assert.equal(r.decision,'NO_COMPRAR');
-  assert.equal(r.reason,'SIN_VALOR');
+  assert.equal(r.decision,'POR_VERIFICAR');
+  assert.equal(r.reason,'MUESTRA_INSUFICIENTE');
 });
 
 test('resale is set by undercutting the cheapest competitor',()=>{
@@ -144,4 +144,28 @@ test('an ad that sat unsold for days competes but is not evidence of value',()=>
   // Only stale expensive ads: not enough evidence of what sells.
   const r=assess(gible(9000),[old(40000,'a'),old(42000,'b'),old(44000,'c')],opts);
   assert.equal(r.reason,'MUESTRA_INSUFICIENTE');
+  const noLongerSeen={...old(5000,'old-cheap'),lastSeen:now-2*day};
+  assert.equal(assess(gible(9000),[...peers,noLongerSeen],opts).resale,29700);
+  const justReadOld=peers.map(row=>({...row,age:'8 días'}));
+  assert.equal(assess(gible(9000),justReadOld,opts).comparables,0);
+});
+
+test('breeding prices require the same sex, variant and transferable IVs',()=>{
+  const row=gible(2500,[10,10,31,8,14,31],{nature:'ingenua',species:'Chimchar',sex:'F'});
+  const peers=[28000,30000,32000].map((price,i)=>({...row,price,fingerprint:'breed'+i,
+    nature:['rara','cauta','docil'][i]}));
+  const wrong=peers.map(r=>({...r,sex:'M'})).concat(peers.map(r=>({...r,variant:'alfa'})),
+    peers.map(r=>({...r,ivs:[10,31,10,8,14,31]})));
+  assert.equal(assess(row,wrong,opts).comparables,0);
+  assert.equal(assess(row,wrong,opts).decision,'POR_VERIFICAR');
+  const result=assess(row,peers,opts);
+  assert.equal(result.tier,'breeding');
+  assert.equal(result.decision,'COMPRAR');
+  assert.equal(assess({...row,sex:'?'},peers,opts).reason,'SEXO_NO_CONFIRMADO');
+});
+
+test('a special listing with low IVs waits for references instead of assuming it has no market',()=>{
+  const row={...gible(16000,[5,26,19,10,13,21]),species:'Ditto',variant:'particulas',sex:'N'};
+  assert.equal(assess(row,[],opts).decision,'POR_VERIFICAR');
+  assert.equal(assess({...row,variant:'desconocida'},[],opts).reason,'VARIANTE_NO_CONFIRMADA');
 });

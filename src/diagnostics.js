@@ -62,6 +62,7 @@ function createDiagnostics(folder){
       rank:r.rank,species:String(r.species||'—').slice(0,40),
       level:Number.isInteger(r.level)?r.level:null,
       nature:r.nature||null,price:Number.isSafeInteger(r.price)?r.price:null,
+      sex:r.sex||null,variant:r.variant||null,
       ivs:Array.isArray(r.ivs)?r.ivs.slice(0,6):[],
       state:r.state||'missing',
       missingFields:(r.missingFields||[]).slice(0,9)
@@ -97,6 +98,7 @@ function createDiagnostics(folder){
         (info.ocrContext?' | '+info.ocrContext:''),
       ...info.ocrRows.map(r=>'Fila '+r.rank+': '+r.state+' | '+r.species+
         ' | Nv. '+(r.level??'?')+' | '+(r.nature||'?')+
+        ' | Sexo '+(r.sex||'?')+' | Variante '+(r.variant||'?')+
         ' | Precio '+(r.price??'?')+
         ' | IV '+r.ivs.map(v=>v===null?'?':v).join('/')+
         ' | Falta: '+r.missingFields.join(',')),

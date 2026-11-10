@@ -1,6 +1,6 @@
 'use strict';
 const {contextBridge,ipcRenderer}=require('electron');
-const allowedEvents=new Set(['radar:status','radar:data','radar:overlay','radar:diagnostics','radar:engineProgress']);
+const allowedEvents=new Set(['radar:status','radar:data','radar:overlay','radar:progress','radar:diagnostics','radar:engineProgress']);
 contextBridge.exposeInMainWorld('radar',{
   getState:()=>ipcRenderer.invoke('radar:getState'),
   play:()=>ipcRenderer.invoke('radar:play'),

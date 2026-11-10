@@ -74,16 +74,18 @@ test('reads gender colors only from the small symbol area',()=>{
   const image={isEmpty:()=>false,getSize:()=>({width:1600,height:1000}),
     crop:rect=>{
       const b=Buffer.alloc(rect.width*rect.height*4);
-      const female=rect.y===Math.round(panel.y+(grid.top+grid.step)*panel.width-panel.width*.024);
-      const male=rect.y===Math.round(panel.y+grid.top*panel.width-panel.width*.024);
-      for(let i=0;i<b.length;i+=4){
-        b[i]=male?200:female?180:65;b[i+1]=male?170:female?90:65;
-        b[i+2]=male?50:female?235:65;b[i+3]=255;
+      for(let y=0;y<rect.height;y++)for(let x=0;x<rect.width;x++){
+        const py=rect.y+y,k=(y*rect.width+x)*4;
+        // The blue focus border above the first glyph must not vote male.
+        const male=py===258||py===259||(py>=311&&py<=316);
+        const female=py>=268&&py<=273;
+        b[k]=male?200:female?180:65;b[k+1]=male?170:female?90:65;
+        b[k+2]=male?50:female?235:65;b[k+3]=255;
       }
       return {toBitmap:()=>b};
     }};
   const sex=inferGtlSexes(image,panel,grid);
-  assert.equal(sex[0],'M');assert.equal(sex[1],'F');assert.equal(sex[2],'?');
+  assert.equal(sex[0],'F');assert.equal(sex[1],'M');assert.equal(sex[2],'?');
 });
 
 test('prefers upper GTL title instead of longer lower header bars',()=>{

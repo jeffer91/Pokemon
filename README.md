@@ -1,4 +1,4 @@
-# PokéRadar GTL — v0.15.1
+# PokéRadar GTL — v0.16.0
 
 Aplicación de escritorio Electron para Windows 11. **Play** inicia una sesión de lectura visual del GTL, sin formularios de cuota ni posiciones X/Y, y muestra un pequeño radar flotante. No realiza compras ni controla el cliente del juego.
 
@@ -339,6 +339,13 @@ Revisado con la base real del jugador (558 anuncios, 183 especies): el 60 % esta
 - Ritmo: 0,7 s con el GTL visible (OCR solo si la tabla cambia), 2,5 s fuera del GTL y pausa total mientras usas la ventana de PokéRadar.
 
 **Versión visible** en la cabecera, en el título de la ventana y en el diagnóstico.
+
+## v0.16.0 — Gangas y aprendizaje
+
+- **Gangas** evalúa con los comparables completos de la misma página. «Por verificar» señala que falta evidencia para recomendar una compra. El aviso verde conserva el mínimo de 7/10 y la reserva de saldo del 15 %.
+- **Aprendiendo** cuenta cuatro anuncios distintos de una misma clase, da prioridad a búsquedas asequibles y muestra la especie buscada si difiere de la misión. En crianza se separan hembra, macho y Pokémon sin sexo.
+- El lector guarda combinaciones de Alfa, Variocolor y Partículas y distingue el sexo del borde de selección. SQLite conserva el historial de la versión anterior y reúne precios nuevos con la clasificación corregida.
+- **Saltar misión** actualiza el contador y el nombre. La app intenta registrar Ctrl + Alt + → y Ctrl + Shift + F8, muestra los atajos disponibles y mantiene el botón.
 
 ## v0.15.3 — Menos CPU: el OCR solo lee lo que cambió
 

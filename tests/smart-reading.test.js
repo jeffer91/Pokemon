@@ -38,6 +38,22 @@ function row(rank,ivs,extra={}){
     ivConf:ivs.map(v=>v===null?0:95),...extra};
 }
 
+test('a lower particle badge is preserved alongside pale gold stars and the alpha outline',()=>{
+  const {detectVariant}=require('../src/cell-reader');
+  const b=canvas();
+  function badge(cx,cy,[r,g,blue]){
+    for(let y=cy-3;y<=cy+3;y++)for(let x=cx-3;x<=cx+3;x++){
+      const i=(y*W+x)*4;b[i]=blue;b[i+1]=g;b[i+2]=r;
+    }
+  }
+  badge(48,50,[192,20,29]);
+  badge(76,41,[253,242,103]);
+  badge(76,57,[75,225,214]);
+  badge(24,100,[75,225,214]); // left diamond on a different row
+  assert.equal(detectVariant(cells,{bitmap:b,width:W,height:H},1),'alfa+variocolor+particulas');
+  assert.equal(detectVariant(cells,{bitmap:b,width:W,height:H},2),'normal');
+});
+
 test('green cells are 31, learned digits fill gaps and fix a white "31"',()=>{
   const b=canvas();
   const truth1=[12,25,7,30,14,3],truth2=['31g','25','7','14','9','21'];

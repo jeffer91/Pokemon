@@ -14,6 +14,9 @@ function sameVisibleOffers(previous=[],next=[]){
        before.price!==row.price)return false;
     if(Number.isInteger(before.level)&&Number.isInteger(row.level)&&
        before.level!==row.level)return false;
+    for(const field of ['nature','sex','variant']){
+      if(before[field]&&row[field]&&before[field]!==row[field])return false;
+    }
     if(Array.isArray(before.ivs)&&Array.isArray(row.ivs)&&
        before.ivs.length===6&&row.ivs.length===6&&
        before.ivs.every(Number.isInteger)&&row.ivs.every(Number.isInteger)&&

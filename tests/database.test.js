@@ -36,8 +36,47 @@ test('SQLite v2 retains verified listings and records partial OCR without mixing
   const scan=db.recordMarketScan({rows:[{...p(),rank:4}],partialRows:[{rank:5,species:'Gible',price:12000,ivs:[31,null,null,null,null,null],missing:'IV_INCOMPLETOS'}],context:'GTL|newest',sort:'newest',wordCount:65,imageHash:'abc'});
   assert.equal(scan.saved,1);assert.equal(scan.partial,1);
   assert.equal(db.summary().total,1);assert.equal(db.summary().scans,1);assert.equal(db.summary().partials,1);
-  assert.equal(db.db.prepare('PRAGMA user_version').get().user_version,7);
+  assert.equal(db.db.prepare('PRAGMA user_version').get().user_version,8);
   db.close();fs.rmSync(folder,{recursive:true,force:true});
+});
+
+test('upgrade retains old observations and separates identical normal and special market reads',()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'radar-v7-'));
+  let db=openDatabase(dir);
+  try{
+    db.db.exec('ALTER TABLE listings DROP COLUMN classification_checked; PRAGMA user_version=7;');
+    const now=Date.now();
+    db.db.prepare(`INSERT INTO listings(fingerprint,species,level,nature,sex,price,ivs_json,first_seen,last_seen,variant)
+      VALUES('old-offer','Dratini',1,'alegre','M',21000,?,?,?,'alfa')`).run(JSON.stringify(p().ivs),now,now);
+    db.db.prepare(`INSERT INTO observations(fingerprint,seen_at,search_context)
+      VALUES('old-offer',?,'general')`).run(now);
+    db.close();
+    db=openDatabase(dir);
+    assert.equal(db.summary().observations,1);
+    assert.equal(db.marketSamples('Dratini').length,0);
+    db.recordMarketScan({rows:[{...p(),rank:1},{...p(),rank:2,variant:'Partículas + Alfa'}]});
+    const samples=db.marketSamples('Dratini');
+    assert.equal(samples.length,2);
+    assert.deepEqual(new Set(samples.map(r=>r.variant)),new Set(['normal','alfa+particulas']));
+    assert.equal(new Set(samples.map(r=>r.fingerprint)).size,2);
+    assert.equal(db.recentByPrice(p().price),null,'two variants share the price');
+    assert.equal(db.summary().total,3);
+  }finally{db.close();fs.rmSync(dir,{recursive:true,force:true});}
+});
+
+test('the evaluator can use complete peers recorded from the same scan and excludes the candidate',()=>{
+  const {assess}=require('../src/brain');
+  const {PRIORITY_PROFILES:profiles}=require('../src/priority-profiles');
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'radar-page-prices-'));
+  const db=openDatabase(dir);
+  try{
+    const row={species:'Gible',level:1,sex:'F',nature:'alegre',ivs:[10,31,12,8,14,31],price:9000,rank:1};
+    db.recordMarketScan({rows:[row,...[14000,15000,16000].map((price,i)=>({...row,price,rank:i+2}))]});
+    const r=assess(row,db.marketSamples(row.species),{profiles,balance:63672});
+    assert.equal(r.comparables,3);
+    assert.equal(r.decision,'COMPRAR');
+    assert.equal(r.resale,13860);
+  }finally{db.close();fs.rmSync(dir,{recursive:true,force:true});}
 });
 
 test('guarda el motor de captura seleccionado sin cambiar el esquema SQLite',()=>{
@@ -120,7 +159,7 @@ test('SQLite persists editable targets and matches filtered ideal market prices'
 test('catálogo v5 y sugerencias quedan disponibles al reiniciar, sin borrar observaciones',()=>{
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'radar-catalog-'));
   let db=openDatabase(dir);
-  assert.equal(db.db.prepare('PRAGMA user_version').get().user_version,7);
+  assert.equal(db.db.prepare('PRAGMA user_version').get().user_version,8);
   assert.equal(db.catalogProfiles().length,10);
   assert.equal(db.catalogProfiles().find(p=>p.species==='Shroomish').evolution,'Breloom');
   const row={species:'Gible',nature:'alegre',level:1,sex:'M',

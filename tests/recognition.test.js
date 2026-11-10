@@ -7,6 +7,12 @@ test('interpreta los miles en formato GTL',()=>{
   assert.equal(pm('$34,628'),34628);assert.equal(parseMoney('$2.500'),2500);
   assert.equal(pm('$530.000'),530000);assert.equal(pm('???'),null);
 });
+test('a capped result count does not prove the last page has been reached',()=>{
+  const read=total=>parseScreen({words:[word('Mostrando 141 a 150 de '+total+' anuncios',.50,.75)]},
+    1680,900,{gtlConfirmed:true});
+  assert.equal(read('150+').pageInfo.last,false);
+  assert.equal(read('150').pageInfo.last,true);
+});
 test('lee una fila sintética de la cuadrícula, detecta GTL y saldo',()=>{
   const w=[word('Servidor',.25,.16),word('de',.30,.16),word('Comercio',.35,.16),word('Comprar',.74,.265),
     word('$34,628',.045,.10),word('Nv.',.265,.316),word('27',.285,.316),word('Chatot',.327,.316),word('fuerte',.38,.316),

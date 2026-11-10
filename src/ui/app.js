@@ -1,6 +1,14 @@
 'use strict';
 const $=id=>document.getElementById(id);
 const currency=n=>Number.isSafeInteger(n)?new Intl.NumberFormat('es-EC').format(n)+' ¥':'—';
+const SEX_NAME={F:'♀ Hembra',M:'♂ Macho',N:'Sin sexo','?':'Sexo por confirmar'};
+const VARIANT_NAME={alfa:'Alfa',variocolor:'Variocolor',particulas:'Partículas',desconocida:'Variante por confirmar'};
+const DECISION_NAME={COMPRAR:'COMPRAR',NO_COMPRAR:'No comprar',POR_VERIFICAR:'Por verificar',SILENCIO:'Leyendo'};
+function offerName(row){
+  const tags=(row.variant||'').split('+').map(mark=>VARIANT_NAME[mark]).filter(Boolean);
+  if(SEX_NAME[row.sex])tags.push(SEX_NAME[row.sex]);
+  return [row.species+(row.level?' · Nv. '+row.level:''),...tags].join(' · ');
+}
 const stamp=n=>n?new Date(n).toLocaleString('es-EC'):'—';
 let current={status:{running:false},settings:{}};
 function notice(text){$('notice').textContent=text||'';}
@@ -31,11 +39,11 @@ function fillTable(id,rows,cols,empty){
 }
 const STATE_LABEL={comprado:'Comprado',en_venta:'En venta',vendido:'Vendido',expirado:'Expiró sin venderse'};
 function renderTrades(s){
-  if(s.near)fillTable('near',s.near,r=>[r.species+(r.level?' · Nv. '+r.level:''),currency(r.price),
-    r.score.toFixed(1)+'/10',Number.isFinite(r.netEstimate)?currency(r.netEstimate):'—',r.reasonText||'—'],
-    'Nada cercano todavía: el cerebro necesita más precios de cada clase.');
+  if(s.near)fillTable('near',s.near,r=>[offerName(r),currency(r.price),
+    Number.isFinite(r.score)?r.score.toFixed(1)+'/10':'—',currency(r.netEstimate),r.reasonText||'—'],
+    'Aún no hay candidatos para verificar.');
   if(s.trades){
-    fillTable('trades',s.trades,t=>[t.species+(t.level?' · Nv. '+t.level:''),currency(t.buy_price),
+    fillTable('trades',s.trades,t=>[offerName(t),currency(t.buy_price),
       t.listed_price?currency(t.listed_price):'—',STATE_LABEL[t.state]||t.state,
       Number.isFinite(t.net)?currency(t.net):'—',t.days!==null&&t.days!==undefined?String(t.days):'—'],'Aún no hay compras registradas.');
     const closed=s.trades.filter(t=>Number.isFinite(t.net));
@@ -46,18 +54,23 @@ function renderTrades(s){
 function renderLearn(s){
   const m=s.learn,box=$('learn-current');
   $('next-mission').disabled=!(m&&!m.done);
+  $('next-mission').textContent=m?.shortcut?'Saltar misión ('+m.shortcut+')':'Saltar misión';
   if(!m){$('learn-count').textContent='Pulsa «Aprender precios»';}
-  else if(m.done){$('learn-count').textContent='Completo';box.textContent='Todas las misiones ya tienen suficientes precios. Usa «Cazar gangas».';}
+  else if(m.done){
+    $('learn-count').textContent='Sin misiones pendientes';
+    box.textContent=m.completed+' con referencias · '+m.skipped+' omitidas. Usa «Cazar gangas».';
+  }
   else{
-    $('learn-count').textContent='Misión '+(m.completed+1)+' de '+m.total+' · datos '+m.got+'/'+m.goal;
+    $('learn-count').textContent='Misión '+m.position+' de '+m.total+' · comparables '+m.got+'/'+m.goal;
     box.replaceChildren();
     const title=document.createElement('b');title.textContent='Busca '+m.species;
     const filters=document.createElement('div');filters.textContent='Filtros: '+m.filters.join(' · ');
-    const sort=document.createElement('div');sort.textContent='Orden: '+m.sort+' · base de '+m.target;
+    const sort=document.createElement('div');sort.textContent=m.sort+' · '+m.target;
     const check=document.createElement('div');
     check.textContent=m.filterCheck?'Tus filtros: '+(m.filterCheck.ok===true?'✓ ':m.filterCheck.ok===false?'✗ ':'')+m.filterCheck.text:
       'Tus filtros: abre Búsqueda Avanzada en el juego y la app los revisa';
     box.append(title,filters,sort,check);
+    if(m.note){const note=document.createElement('div');note.textContent=m.note;box.append(note);}
   }
   const body=$('missions');body.replaceChildren();
   for(const x of s.missions||[]){
@@ -76,9 +89,9 @@ function renderStatus(s){
   $('play').classList.toggle('running',running&&!learning);$('learn').classList.toggle('running',learning);
   renderLearn(s);renderTrades(s);
   const badge=$('status-badge');
-  badge.textContent=running?(s.state==='activo'?'GTL ACTIVO':s.state==='capturada'?'PANTALLA CAPTADA':s.state==='error'?'REVISAR':'EN ESPERA'):'DETENIDO';
+  badge.textContent=running?(s.state==='error'?'REVISAR':learning?'APRENDIENDO':'GANGAS'):'DETENIDO';
   badge.className='state'+(running?' on':'')+(s.state==='error'?' bad':'');
-  $('state-message').textContent=s.message||'Radar listo.';
+  $('state-message').textContent=s.message||'Listo para leer el GTL.';
   $('latency').textContent=Number.isFinite(s.latency)?s.latency+' ms · '+(s.recognized||0)+' anuncios':'';
 }
 function renderData(data){
@@ -100,15 +113,14 @@ function renderData(data){
   renderCompetitive(data.competitive||[]);
   renderProjects(data.projects||[]);
   renderActivity(s.activity||[]);
-  $('radar-tip').textContent=(s.total||0)+' anuncios leídos · Puntaje 0–10: calidad frente al ideal + ganancia neta '+
-    '(precio de reventa estimado − precio − cuota 1.000). Con 7 o más y dentro de presupuesto: COMPRAR. '+
-    'El precio de reventa sale de anuncios vistos, no de ventas confirmadas.';
+  $('radar-tip').textContent=(s.total||0)+' anuncios leídos · COMPRAR requiere comparables, margen después de la cuota, '+
+    'al menos 7/10 y saldo disponible. Si faltan datos, el anuncio queda por verificar.';
 
   const listings=$('listings');listings.replaceChildren();
   for(const row of (data.recent||[]).slice(0,8)){
     const tr=document.createElement('tr');
-    const label={COMPRAR:'COMPRAR',NO_COMPRAR:'No comprar',SILENCIO:'Aprendiendo'}[row.decision]||'—';
-    for(const value of [row.species+' · Nv. '+row.level,row.ivs?.filter(x=>x===31).length+'×31',
+    const label=DECISION_NAME[row.decision]||'—';
+    for(const value of [offerName(row),row.ivs?.filter(x=>x===31).length+'×31',
       Number.isFinite(row.revQuality)?row.revQuality.toFixed(1)+'/10':'—',
       Number.isFinite(row.netEstimate)?currency(row.netEstimate):'—',
       label+(row.reasonText?' · '+row.reasonText:''),currency(row.price)]){
@@ -140,7 +152,7 @@ function renderData(data){
     const price=Number.isSafeInteger(h.price)?currency(h.price):'Precio no disponible';
     const detail=(reasons[h.reason]||h.reason||'Sin motivo')+
       (Number.isSafeInteger(h.estimated_net)?' · Neto estimado: '+currency(h.estimated_net):'');
-    history.append(itemNode((h.decision==='COMPRAR'?'COMPRAR':'NO COMPRAR')+
+    history.append(itemNode((DECISION_NAME[h.decision]||'—')+
       ' · '+species+' · '+price,detail+' · '+stamp(h.timestamp)));
   }
   if(!history.childElementCount)history.textContent='Aún no hay decisiones.';
@@ -155,9 +167,11 @@ $('trade-form').addEventListener('submit',async e=>{
   e.preventDefault();
   try{
     await window.radar.addTrade({species:$('tf-species').value,level:$('tf-level').value,nature:$('tf-nature').value,
-      ivs:$('tf-ivs').value,price:$('tf-price').value,alfa:$('tf-alfa').checked});
+      ivs:$('tf-ivs').value,price:$('tf-price').value,sex:$('tf-sex').value,
+      alfa:$('tf-alfa').checked,variocolor:$('tf-variocolor').checked,particulas:$('tf-particulas').checked});
     for(const id of ['tf-species','tf-level','tf-nature','tf-ivs','tf-price'])$(id).value='';
-    $('tf-alfa').checked=false;notice('Compra añadida.');
+    for(const mark of ['alfa','variocolor','particulas'])$('tf-'+mark).checked=false;
+    $('tf-sex').value='?';notice('Compra añadida.');
   }catch(err){notice(String(err.message||err).replace(/^Error invoking remote method '[^']+': (Error: )?/,''));}
 });
 $('learn').addEventListener('click',async()=>{
@@ -166,7 +180,10 @@ $('learn').addEventListener('click',async()=>{
   catch(e){notice('No se pudo iniciar el aprendizaje. Revisa Diagnóstico.');navigate('diagnostico');}
 });
 $('next-mission').addEventListener('click',async()=>{
-  try{await window.radar.nextMission();}catch(e){notice(e.message);}
+  try{
+    const m=await window.radar.nextMission();
+    if(m)notice(m.done?'Sin misiones pendientes':'Siguiente misión · '+m.species);
+  }catch(e){notice(e.message);}
 });
 $('stop').addEventListener('click',async()=>{
   notice('');try{await window.radar.stop();}catch(e){notice(e.message);}
@@ -235,7 +252,7 @@ function renderDiagnostics(info){
   for(const r of rows){
     const tr=document.createElement('tr');
     const columns=[
-      String(r.rank),r.species||'—',currency(r.price),
+      String(r.rank),r.species==='—'?'—':offerName(r),currency(r.price),
       (r.ivs||[]).map(v=>Number.isInteger(v)?v:'?').join('/'),
       r.missingFields?.length?r.missingFields.join(', '):'Completo'
     ];

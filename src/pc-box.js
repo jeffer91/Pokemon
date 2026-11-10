@@ -3,6 +3,7 @@
 // Read on an inverted, enlarged crop (Tesseract reads dark-on-light far
 // better). Calibrated on a 1920×1080 capture of the summary panel.
 const {fuzzyNature,parseNameCell}=require('./recognition');
+const {sexOf,variantOf,isRecentOffer}=require('./market');
 
 // Fractions of the game frame (the PC box window opens centred).
 const BOX_REGION={x:.18,y:.13,width:.185,height:.71};
@@ -27,10 +28,14 @@ function parseBox(text){
   const lines=String(text||'').split(/\r?\n/).map(l=>l.trim()).filter(Boolean);
   const all=clean(lines.join(' '));
   if(!/estadisticas/.test(all)||!/naturaleza/.test(all))return null;
-  let name=null;
+  let name=null,sex=null;
   for(const l of lines){
     const m=l.match(/N[vw]\s*[.,:]?\s*\d{1,3}\s+\p{L}/u);
-    if(m){name=parseNameCell(l.slice(m.index));if(name.species)break;}
+    if(m){
+      name=parseNameCell(l.slice(m.index).replace(/[♀♂]/g,''));
+      sex=l.includes('♀')?'F':l.includes('♂')?'M':null;
+      if(name.species)break;
+    }
   }
   if(!name?.species)return null;
   // Six "a/b/c/d/e/f" groups in order: Estadísticas, IVs, EVs.
@@ -48,7 +53,7 @@ function parseBox(text){
   const natureRaw=clean(after('naturaleza')).replace(/[^a-z]/g,'');
   const nature=fuzzyNature(natureRaw);
   const ability=after('habilidad').replace(/[^\p{L}\s]/gu,'').trim()||null;
-  return {species:name.species,level:name.level,ivs,nature,ability};
+  return {species:name.species,level:name.level,ivs,nature,ability,...(sex?{sex}:{})};
 }
 
 function frameRect(size,r){
@@ -71,16 +76,19 @@ function alphaEmblem(bitmap,width,rect){
 const count31=ivs=>(ivs||[]).filter(v=>v===31).length;
 function saleAdvice(pokemon,samples,{classKeys,profiles,feeFor=()=>1000,buyPrice=null,now=Date.now()}){
   if(!pokemon)return null;
-  const variant=pokemon.variant||'normal';
-  const keys=classKeys({...pokemon,variant},profiles);
-  const fresh=(samples||[]).filter(s=>s.lastSeen>=now-86_400_000&&Array.isArray(s.ivs)&&Number.isSafeInteger(s.price)&&
-    (s.variant||'normal')===variant);
+  const variant=variantOf(pokemon),sex=sexOf(pokemon);
+  // Older PC summaries may omit the glyph. Keep the conservative selling
+  // estimate in that case and identify it as a price to verify.
+  const compare=s=>classKeys(sex==='?'?{...s,sex:'?'}:s,profiles);
+  const keys=compare(pokemon);
+  const fresh=(samples||[]).filter(s=>isRecentOffer(s,now)&&Array.isArray(s.ivs)&&Number.isSafeInteger(s.price)&&
+    variantOf(s)===variant&&(sex==='?'||sexOf(s)===sex));
   const levels=[
-    {label:'idénticos',test:s=>classKeys(s,profiles).exact===keys.exact},
-    {label:'mismos 31 útiles',test:s=>classKeys(s,profiles).loose===keys.loose},
+    {label:'misma clase',test:s=>compare(s).exact===keys.exact},
+    {label:'mismos 31 útiles',test:s=>compare(s).loose===keys.loose},
     {label:(variant!=='normal'?variant+' ':'')+count31(pokemon.ivs)+'×31',test:s=>count31(s.ivs)===count31(pokemon.ivs)}
   ];
-  const base={species:pokemon.species,level:pokemon.level,nature:pokemon.nature,ivs:pokemon.ivs,variant,buyPrice};
+  const base={species:pokemon.species,level:pokemon.level,nature:pokemon.nature,ivs:pokemon.ivs,variant,sex,buyPrice};
   for(const level of levels){
     const prices=fresh.filter(level.test).map(s=>s.price).sort((a,b)=>a-b);
     if(!prices.length)continue;
@@ -90,7 +98,8 @@ function saleAdvice(pokemon,samples,{classKeys,profiles,feeFor=()=>1000,buyPrice
     const fee=feeFor(suggested);
     const net=Number.isSafeInteger(buyPrice)?suggested-buyPrice-fee:null;
     return {...base,comparables:prices.length,compared:level.label,cheapest,suggested,fast,fee,net,
-      note:prices.length<3?'Pocos comparables ('+prices.length+'): revisa el GTL':null};
+      note:sex==='?'?'Sexo por confirmar · revisa el GTL':
+        prices.length<3?'Pocos comparables ('+prices.length+'): revisa el GTL':null};
   }
   return {...base,comparables:0,suggested:null,
     note:'Sin precios recientes: busca '+pokemon.species+(variant!=='normal'?' ('+variant+')':'')+' por Menor Precio en el GTL'};

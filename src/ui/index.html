@@ -13,7 +13,7 @@
     <div class="actions"><button id="play" class="play" title="Marca COMPRA ESTE AHORA en las gangas"><span aria-hidden="true">▶</span> Cazar gangas</button><button id="learn" class="learn" title="Te dice qué buscar en el GTL para llenar la base de precios"><span aria-hidden="true">▶</span> Aprender precios</button><button id="stop" class="stop" disabled>■ Stop</button></div>
   </div>
   <nav aria-label="Secciones">
-    <button class="tab active" data-tab="radar">Radar</button>
+    <button class="tab active" data-tab="radar">Gangas</button>
     <button class="tab" data-tab="equipo">Equipo ideal</button>
     <button class="tab" data-tab="catalogo">Pokédex ideal</button>
     <button class="tab" data-tab="precios">Precios ideales</button>
@@ -38,13 +38,13 @@
     <div class="tip" id="radar-tip">La base se alimentará mientras revisas el GTL.</div>
     <div class="panel" id="learn-panel">
       <div class="heading"><h2>Aprender precios</h2><span id="learn-count">Pulsa «Aprender precios»</span></div>
-      <div id="learn-current" class="learn-current">Cada misión es una Búsqueda Avanzada: especie, naturaleza y los IV en 31 que pide el ideal. Aplícala en el GTL, ordena por precio y mira 2–3 páginas. Con 8 anuncios distintos la misión se completa y pasa sola a la siguiente.</div>
-      <div class="learn-actions"><button id="next-mission" class="ghost" disabled>Saltar misión (Ctrl+Alt+→)</button></div>
+      <div id="learn-current" class="learn-current">Aplica los filtros de la misión en el GTL y selecciona Menor Precio. El progreso cuenta anuncios distintos, completos y comparables entre sí.</div>
+      <div class="learn-actions"><button id="next-mission" class="ghost" disabled>Saltar misión</button></div>
       <div class="scroll"><table><thead><tr><th>Próximas misiones</th><th>Filtros</th><th>Datos</th><th>Para</th></tr></thead>
       <tbody id="missions"><tr><td colspan="4">—</td></tr></tbody></table></div>
     </div>
     <div class="panel" id="near-panel">
-      <div class="heading"><h2>Casi gangas</h2><span>Las 5 más cercanas a COMPRAR en los últimos 30 min</span></div>
+      <div class="heading"><h2>Para verificar</h2><span>Hasta 5 candidatos de los últimos 30 min</span></div>
       <div class="scroll"><table><thead><tr><th>Pokémon</th><th>Precio</th><th>Puntaje</th><th>Ganancia est.</th><th>Por qué no llega</th></tr></thead>
       <tbody id="near"><tr><td colspan="5">Usa «Cazar gangas» para ver aquí lo más cercano a una compra.</td></tr></tbody></table></div>
     </div>
@@ -58,7 +58,10 @@
         <input id="tf-nature" placeholder="Naturaleza">
         <input id="tf-ivs" placeholder="IVs 25/18/14/31/23/31">
         <input id="tf-price" placeholder="Precio de compra" inputmode="numeric" required>
+        <select id="tf-sex" aria-label="Sexo"><option value="?">Sexo por confirmar</option><option value="F">Hembra</option><option value="M">Macho</option><option value="N">Sin sexo</option></select>
         <label><input id="tf-alfa" type="checkbox"> Alfa</label>
+        <label><input id="tf-variocolor" type="checkbox"> Variocolor</label>
+        <label><input id="tf-particulas" type="checkbox"> Partículas</label>
         <button type="submit" class="ghost">Añadir compra</button>
       </form>
     </div>

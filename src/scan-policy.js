@@ -17,4 +17,11 @@ function region(width,height,part){
 function shouldCheckHeader(fingerprint,previousFingerprint,lastCheckedAt,now=Date.now(),retryMs=6000){
   return fingerprint!==previousFingerprint || !lastCheckedAt || now-lastCheckedAt>=retryMs;
 }
-module.exports={nextDelay,region,shouldCheckHeader,DELAYS};
+function marketRegion(size,panel){
+  const bounds={fullWidth:size.width,fullHeight:size.height};
+  if(!panel)return {...region(size.width,size.height,'market'),...bounds};
+  // Include the Pokémon search box and sort control above the rows.
+  const y=panel.y+Math.round(panel.width*.061);
+  return {x:panel.x,y,width:panel.width,height:Math.min(size.height-y,Math.round(panel.width*.551)),...bounds};
+}
+module.exports={nextDelay,region,marketRegion,shouldCheckHeader,DELAYS};
