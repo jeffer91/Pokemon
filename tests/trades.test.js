@@ -47,6 +47,23 @@ test('two real sales replace asking prices in the resale estimate',()=>{
   assert.match(r.scope,/ventas reales/);
 });
 
+test('a confirmed sale and its earlier listing count as a single reference',()=>{
+  const now=Date.now();
+  const row={species:'Gible',level:1,nature:'alegre',sex:'F',ivs:[10,31,12,8,14,31],price:9000};
+  const sold={...row,price:15500,lastSeen:now-2000};
+  const offer={...row,price:17000,lastSeen:now-1000};
+  const options={profiles:PRIORITY_PROFILES,balance:200000,now,sales:[sold]};
+  const earlier={...sold,lastSeen:now-3000};
+  const result=assess(row,[earlier,offer],options);
+  assert.equal(result.reason,'MUESTRA_INSUFICIENTE');
+  assert.equal(result.comparables,1);
+  assert.equal(result.confirmedSales,1);
+  const independent={...offer,price:18000};
+  assert.equal(assess(row,[earlier,offer,independent],options).netEstimate,5500);
+  const later={...sold,lastSeen:now-1000};
+  assert.equal(assess(row,[later,offer],options).resale,15345);
+});
+
 test('advanced-search labels map to fields even with OCR noise',()=>{
   assert.equal(filterField('Naturaleza'),'nature');
   assert.equal(filterField('Nivel Max'),'levelMax');

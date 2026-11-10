@@ -131,12 +131,13 @@ function trackNear(decisions){
     if(d.decision!=='POR_VERIFICAR'&&!(d.decision==='NO_COMPRAR'&&d.netEstimate>0)){
       nearBargains.delete(d.fingerprint);continue;
     }
-    nearBargains.set(d.fingerprint,{species:d.species,level:d.level,price:d.price,score:d.score,quality:d.quality,
-      variant:d.variant,sex:d.sex,
+    nearBargains.set(d.fingerprint,{species:d.species,level:d.level,price:d.price,score:d.score,
+      variant:d.variant,sex:d.sex,references:(d.comparables??0)+(d.confirmedSales??0),
       netEstimate:d.netEstimate??null,reasonText:d.reasonText,seenAt:now});
   }
   for(const [k,v] of nearBargains)if(now-v.seenAt>30*60_000)nearBargains.delete(k);
-  return [...nearBargains.values()].sort((a,b)=>(b.score??b.quality??0)-(a.score??a.quality??0)).slice(0,5);
+  return [...nearBargains.values()].sort((a,b)=>(b.netEstimate??0)-(a.netEstimate??0)||
+    b.references-a.references||b.seenAt-a.seenAt).slice(0,5);
 }
 function publishLearn(){
   setStatus({kind:sessionKind,learn:learnView(),missions:sessionKind==='learn'&&learner?learner.list():[]});
@@ -275,7 +276,7 @@ function recentEvaluated(profiles){
     const ev=assess(row,samples,{...options,sales});
     const p=profiles.find(p=>p.searchSpecies.toLowerCase()===species);
     const q=grade(row,ev,p);
-    return {...row,ivQuality:q.iv,revQuality:ev.score,criQuality:q.cri,fitQuality:q.fit,
+    return {...row,ivQuality:q.iv,qualityScore:ev.score,criQuality:q.cri,fitQuality:q.fit,
       decision:ev.decision,reasonText:ev.reasonText,netEstimate:ev.netEstimate??null};
   });
 }

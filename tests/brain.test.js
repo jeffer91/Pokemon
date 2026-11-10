@@ -1,13 +1,13 @@
 'use strict';
 const {test}=require('node:test');
 const assert=require('node:assert/strict');
-const {assess,profileFit,dealScore}=require('../src/brain');
+const {assess,profileFit}=require('../src/brain');
 const {targetsFor}=require('../src/lines');
 const {PRIORITY_PROFILES}=require('../src/priority-profiles');
 
 const now=Date.now();
 const gible=(price,ivs=[10,31,12,8,14,31],extra={})=>({species:'Gible',level:1,nature:'alegre',sex:'F',
-  price,ivs,lastSeen:now-3600_000,...extra});
+  price,ivs,lastSeen:now-1000,...extra});
 const opts={profiles:PRIORITY_PROFILES,balance:200000,now};
 
 test('evolution lines connect bases with their competitive target',()=>{
@@ -26,13 +26,14 @@ test('ideal Gible Alegre Ata+Vel 31 has maximum quality',()=>{
   assert.equal(wrong.ideal,false);
 });
 
-test('a cheap ideal Gible among pricier peers is a bargain (score ≥ 7)',()=>{
+test('a cheap ideal Gible among pricier peers is a bargain',()=>{
   const peers=[22000,24000,25000,27000,30000,26000].map((p,i)=>gible(p,undefined,{fingerprint:'f'+i}));
   const r=assess(gible(9000),peers,opts);
   assert.equal(r.decision,'COMPRAR');
-  assert.ok(r.score>=7);
+  assert.equal(r.score,8.8);
   assert.ok(r.netEstimate>=10000);
-  assert.match(r.reasonText,/Ideal Garchomp/);
+  assert.equal(r.target,'Garchomp');
+  assert.match(r.reasonText,/^Margen/);
 });
 
 test('the 1,000 fee is deducted and a thin margin is rejected',()=>{
@@ -44,15 +45,20 @@ test('the 1,000 fee is deducted and a thin margin is rejected',()=>{
   assert.equal(r.reason,'MARGEN_INSUFICIENTE');
 });
 
-test('a small profit on a non-ideal Pokémon is not enough, a big one is',()=>{
-  const plain=(price,f,ivs=[5,31,14,6,31,27])=>({species:'Zubat',level:20,nature:'docil',sex:'M',price,ivs,lastSeen:now-1000,fingerprint:f});
-  // Junk (a single 31) is never bought just because others ASK a high price.
-  const junk=assess(plain(4000,'j',[5,31,14,6,22,27]),[30000,32000,34000,36000].map((p,i)=>plain(p,'x'+i,[5,31,14,6,22,27])),opts);
-  assert.notEqual(junk.decision,'COMPRAR');
-  const small=assess(plain(4000),[7000,7200,7400,7600].map((p,i)=>plain(p,'z'+i)),opts);
-  assert.notEqual(small.decision,'COMPRAR');
-  const big=assess(plain(4000),[30000,32000,34000,36000,31000].map((p,i)=>plain(p,'y'+i)),opts);
-  assert.equal(big.decision,'COMPRAR');
+test('competitive quality cannot block a supported net profit on the 2,500 Chimchar',()=>{
+  const row={species:'Chimchar',level:1,nature:'ingenua',sex:'M',price:2500,ivs:[13,7,31,15,0,31]};
+  const withoutQuotes=assess(row,[],opts);
+  assert.equal(withoutQuotes.decision,'POR_VERIFICAR');
+  const peers=[7071,7600,8000].map(price=>({...row,price,lastSeen:now-1000}));
+  const priced=assess(row,peers,opts);
+  assert.equal(priced.score,3.8);
+  assert.equal(priced.score,withoutQuotes.score);
+  assert.equal(priced.netEstimate,3500);
+  assert.equal(priced.decision,'COMPRAR');
+  const single31={...row,species:'Zubat',nature:'docil',ivs:[5,31,14,6,22,27]};
+  const breeder=assess(single31,[6000,6200,6400].map(price=>({...single31,price,lastSeen:now-1000})),opts);
+  assert.equal(breeder.score,1.3);
+  assert.equal(breeder.decision,'COMPRAR');
 });
 
 test('budget and missing data are explained, never guessed',()=>{
@@ -61,10 +67,8 @@ test('budget and missing data are explained, never guessed',()=>{
   const empty=assess(gible(9000),[],opts);
   assert.equal(empty.decision,'POR_VERIFICAR');
   assert.equal(empty.reason,'MUESTRA_INSUFICIENTE');
-  assert.equal(empty.score,null);
+  assert.equal(empty.comparables,0);
   assert.equal(assess(gible(9000),peers,{...opts,balance:null}).reason,'SALDO_NO_CONFIRMADO');
-  assert.equal(dealScore(500),0);
-  assert.equal(dealScore(10000),5.5);
 });
 
 test('6×31 prices never inflate a 5×31, and level does not split classes',()=>{
@@ -77,11 +81,11 @@ test('6×31 prices never inflate a 5×31, and level does not split classes',()=>
   assert.equal(lv.tier,'exact','level 100 ads are comparables for a level 1');
 });
 
-test('junk is rejected at once, without waiting for prices',()=>{
+test('a low quality rating without market evidence is shown as pending',()=>{
   const r=assess({species:'Duskull',level:40,nature:'placida',sex:'M',price:1300,ivs:[30,10,2,27,13,11]},[],opts);
-  assert.equal(r.decision,'NO_COMPRAR');
-  assert.equal(r.reason,'SIN_VALOR');
-  assert.equal(r.reasonText,'Bajo potencial por IV y naturaleza');
+  assert.equal(r.decision,'POR_VERIFICAR');
+  assert.equal(r.reason,'MUESTRA_INSUFICIENTE');
+  assert.equal(r.score,0);
 });
 
 test('rough estimates never recommend a buy: only equal Pokémon count',()=>{
@@ -112,8 +116,16 @@ test('the Krookodile case: useless 31s and Alfa variant are never mixed',()=>{
   assert.equal(assess(alfa,normals,{...opts,balance:43800}).reason,'MUESTRA_INSUFICIENTE');
   const alfas=[k(16888,'placida',[24,7,31,31,24,15],'x1','alfa'),k(17000,'hurana',[29,12,4,31,31,28],'x2','alfa'),
     k(18888,'picara',[0,25,31,29,8,31],'x3','alfa')];
-  const {classKeys}=require('../src/brain');
-  assert.notEqual(classKeys(alfa,PRIORITY_PROFILES).exact,classKeys(mine,PRIORITY_PROFILES).exact);
+  assert.equal(assess(alfa,alfas,opts).reason,'MUESTRA_INSUFICIENTE');
+  const sale={...alfa,price:16000,lastSeen:now-5000};
+  const withSale={...opts,sales:[sale]};
+  assert.equal(assess(mine,alfas,withSale).confirmedSales,0);
+  assert.equal(assess(alfa,normals,withSale).reason,'MUESTRA_INSUFICIENTE');
+  const quotes=[17000,18000].map(price=>k(price,alfa.nature,alfa.ivs,'q'+price,'alfa'));
+  const result=assess(alfa,[...normals,...quotes],withSale);
+  assert.equal(result.decision,'COMPRAR');
+  assert.equal(result.confirmedSales,1);
+  assert.equal(result.netEstimate,5000);
 });
 
 test('absurd asking prices never create a fake bargain (real Sneasel data)',()=>{
@@ -133,6 +145,20 @@ test('resale is set by undercutting the cheapest competitor',()=>{
   // Ditto 2×31 at 16.999 while another one sits at 21.111).
   const crowded=[9500,30000,32000,34000].map((p,i)=>gible(p,undefined,{fingerprint:'v'+i}));
   assert.notEqual(assess(gible(9000),crowded,opts).decision,'COMPRAR');
+});
+
+test('a cheap quote seen hours ago does not cap the current Gible market',()=>{
+  const peers=[14000,15000,16000].map(price=>gible(price));
+  const cheap=gible(9800,undefined,{lastSeen:now-2*3600_000});
+  const historical=assess(gible(9000),[cheap,...peers],opts);
+  assert.equal(historical.resale,13860);
+  assert.equal(historical.netEstimate,3860);
+  assert.equal(historical.decision,'COMPRAR');
+  const current=assess(gible(9000),[{...cheap,lastSeen:now-1000},...peers],opts);
+  assert.equal(current.resale,9702);
+  assert.equal(current.reason,'MARGEN_INSUFICIENTE');
+  const allHistorical=[cheap,...peers].map(row=>({...row,lastSeen:now-2*3600_000}));
+  assert.equal(assess(gible(9000),allHistorical,opts).resale,12820);
 });
 
 test('an ad that sat unsold for days competes but is not evidence of value',()=>{

@@ -173,7 +173,7 @@ window.radar.on('radar:overlay',payload=>{
         (payload.step<38?' dense':'');
       const upper=document.createElement('div');upper.className='decision-top';
       const score=document.createElement('strong');
-      const rating=Number.isFinite(item.score)?item.score.toFixed(1)+'/10':'';
+      const rating=Number.isFinite(item.score)?'Calidad '+item.score.toFixed(1)+'/10':'';
       const info=offerMeta(item);
       const compactMeta=info&&payload.step<43;
       score.textContent=compactMeta?info:rating||'—';
@@ -182,8 +182,9 @@ window.radar.on('radar:overlay',payload=>{
         item.decision==='NO_COMPRAR'?'NO COMPRAR':item.decision==='POR_VERIFICAR'?'POR VERIFICAR':'LEYENDO';
       upper.append(score,state);
       const why=document.createElement('span');why.className='decision-reason';
-      why.textContent=(compactMeta&&rating?rating+' · ':'')+(item.reasonText||'En análisis');
-      pill.title=[info,why.textContent].filter(Boolean).join(' · ');
+      const reason=item.reasonText||'En análisis';
+      why.textContent=reason+(compactMeta&&rating?' · '+rating:'');
+      pill.title=[info,reason,rating].filter(Boolean).join(' · ');
       pill.append(upper,why);
       if(info&&!compactMeta){
         const meta=document.createElement('span');meta.className='decision-meta';meta.textContent=info;pill.append(meta);

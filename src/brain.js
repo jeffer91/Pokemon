@@ -1,14 +1,13 @@
 'use strict';
-// Buy alerts require an affordable listing, complete references, and a score
-// of at least seven after accounting for the fee. Compare within each variant
-// and sex, with a separate price class for transferable IVs.
+// Buy alerts require compatible price evidence, an affordable listing and a
+// sufficient net margin. The competitive rating is shown separately.
 const {validListing,validPrice,availableToSpend,normalizedNature,variantOf,sexOf,identity,
   signature,usableListing,isRecentOffer,isFreshComparable,UNKNOWN_VARIANT,DAY_MS}=require('./market');
 const {targetsFor,speciesKey}=require('./lines');
 
 const DEFAULT_FEE=1000;
 const MIN_SAMPLES=3;
-const BUY_SCORE=7;
+const COMPETITION_WINDOW_MS=15*60_000;
 const GENERIC_QUALITY=[0,.5,1.5,2.5,3,3.5,4];
 const round1=n=>Math.round(n*10)/10;
 
@@ -68,31 +67,41 @@ function computeKeys(row,profiles){
     loose:fit.best?[group,fit.best.profile,fit.best.reqMask,fit.best.usefulExtra].join('|'):
       group+'|'+fit.total31};
 }
-function dealScore(net){
-  if(!Number.isFinite(net)||net<1000)return 0;
-  if(net<5000)return 3+1.5*(net-1000)/4000;
-  if(net<10000)return 4.5+(net-5000)/5000;
-  return Math.min(6,5.5+(net-10000)/20000);
-}
 function tier(net){return net>=10000?'excelente':net>=5000?'muy buena':net>=1000?'buena':'baja';}
 const money=n=>Math.round(n).toLocaleString('es-ES');
 
 const TIERS={
-  exact:{label:'clase exacta',confidence:1,minNet:1000,minDiscount:0},
+  exact:{label:'anuncios equivalentes',confidence:1,minNet:1000,minDiscount:0},
   breeding:{label:'crianza · mismos IV y sexo',confidence:.9,minNet:2000,minDiscount:.2}
 };
-function undercut(prices){
-  const sorted=[...prices].filter(Number.isFinite).sort((a,b)=>a-b);
-  if(!sorted.length)return 0;
-  return Math.floor(sorted[0]*.99);
+function priceEstimate(peers,fresh,sales,now){
+  const since=now-COMPETITION_WINDOW_MS;
+  const current=peers.filter(row=>row.lastSeen>=since);
+  // A listing still observed on the GTL caps the estimate, even if it was
+  // posted too long ago to serve as fresh price evidence.
+  const activeFloor=current.length?Math.floor(Math.min(...current.map(row=>row.price))*.99):null;
+  // Prefer current quotes. With too few, use the lower quartile of recent
+  // observations so a single older price does not set the entire estimate.
+  const minimum=MIN_SAMPLES-Math.min(1,sales.length);
+  const currentFresh=fresh.filter(row=>row.lastSeen>=since);
+  const quotes=currentFresh.length>=minimum?currentFresh:fresh;
+  const asking=quotes.length>=minimum?Math.floor(percentile(quotes.map(row=>row.price),.25)*.99):null;
+  const sold=percentile(sales,.5);
+  return Math.min(...[asking,sold,activeFloor].filter(Number.isFinite));
 }
-function cleanPool(samples,listing,now){
+function cleanPool(samples,listing,now,recentSales){
   const ownId=listing.fingerprint||identity(listing);
+  const soldAt=new Map();
+  for(const sale of recentSales){
+    const id=identity(sale);
+    soldAt.set(id,Math.max(soldAt.get(id)??0,sale.lastSeen));
+  }
   const unique=new Map();
   for(const s of samples||[]){
     if(!usableListing(s)||!isRecentOffer(s,now))continue;
     const id=s.fingerprint||identity(s);
-    if(id!==ownId&&!unique.has(id))unique.set(id,s);
+    // An observation of an already sold listing is not separate evidence.
+    if(id!==ownId&&!unique.has(id)&&s.lastSeen>(soldAt.get(id)??-Infinity))unique.set(id,s);
   }
   return [...unique.values()];
 }
@@ -100,7 +109,7 @@ function cleanPool(samples,listing,now){
 function assess(listing,samples=[],{profiles=[],balance=null,fee=null,pendingSpend=0,now=Date.now(),sales=[]}={}){
   const listingFee=Number.isSafeInteger(fee)&&fee>=0?fee:DEFAULT_FEE;
   const silent=(reason,reasonText,extra={})=>({decision:'SILENCIO',reason,reasonText,score:null,
-    scoreKind:'GANGA',confidence:0,feeEstimate:listingFee,...extra});
+    scoreKind:'CALIDAD',confidence:0,feeEstimate:listingFee,...extra});
   if(!listing||!validPrice(listing.price))return silent('PRECIO_NO_LEIDO','Precio sin leer');
   const spendable=availableToSpend(balance,pendingSpend);
   const overBudget=spendable!==null&&listing.price>spendable;
@@ -113,58 +122,53 @@ function assess(listing,samples=[],{profiles=[],balance=null,fee=null,pendingSpe
   const {fit,exact,breeding}=classKeys(listing,profiles);
   const quality=fit.quality,t=fit.total31,target=fit.best?.profile||null;
   const variant=variantOf(listing);
-  const base={scoreKind:'GANGA',quality,ideal:fit.ideal,target,total31:t,feeEstimate:listingFee,spendable};
-  const pending=(reason,reasonText,comparables=0)=>({...base,decision:'POR_VERIFICAR',reason,reasonText,
-    score:null,comparables,confidence:0});
-  if(overBudget)return {...base,...over,score:null};
+  const base={scoreKind:'CALIDAD',score:round1(quality*2.5),quality,ideal:fit.ideal,target,
+    total31:t,feeEstimate:listingFee,spendable};
+  const pending=(reason,reasonText,comparables=0,confirmedSales=0)=>({...base,decision:'POR_VERIFICAR',
+    reason,reasonText,comparables,confirmedSales,confidence:0});
+  if(overBudget)return {...base,...over};
   if(variant===UNKNOWN_VARIANT)return pending('VARIANTE_NO_CONFIRMADA','Variante por confirmar');
   if(sexOf(listing)==='?')return pending('SEXO_NO_CONFIRMADO','Sexo por confirmar');
 
-  const sold=sales.filter(x=>usableListing(x)&&x.lastSeen>=now-30*DAY_MS&&x.lastSeen<=now&&
-    classKeys(x,profiles).exact===exact).map(x=>x.price);
-  if(!t&&quality<1.5&&variant==='normal'&&speciesKey(listing.species)!=='ditto'&&!sold.length)
-    return {...base,decision:'NO_COMPRAR',reason:'SIN_VALOR',reasonText:'Bajo potencial por IV y naturaleza',
-      score:quality,confidence:1,comparables:0};
-
-  const pool=cleanPool(samples,listing,now).map(s=>({s,k:classKeys(s,profiles)}));
+  const recentSales=sales.filter(x=>usableListing(x)&&x.lastSeen>=now-30*DAY_MS&&x.lastSeen<=now);
+  const sold=recentSales.filter(x=>classKeys(x,profiles).exact===exact).map(x=>x.price);
+  const pool=cleanPool(samples,listing,now,recentSales).map(s=>({s,k:classKeys(s,profiles)}));
   const exactPeers=pool.filter(x=>x.k.exact===exact).map(x=>x.s);
-  const breedPeers=breeding?pool.filter(x=>x.k.breeding===breeding).map(x=>x.s):[];
-  const exactCount=exactPeers.filter(s=>isFreshComparable(s,now)).length;
-  const breedCount=breedPeers.filter(s=>isFreshComparable(s,now)).length;
-  const tierKey=exactCount>=MIN_SAMPLES||sold.length>=2?'exact':breedCount>=MIN_SAMPLES?'breeding':null;
+  const exactFresh=exactPeers.filter(s=>isFreshComparable(s,now));
+  const exactEvidence=exactFresh.length+Math.min(1,sold.length);
+  const hasExact=exactEvidence>=MIN_SAMPLES||sold.length>=2;
+  const breedPeers=!hasExact&&breeding?pool.filter(x=>x.k.breeding===breeding).map(x=>x.s):[];
+  const breedFresh=breedPeers.filter(s=>isFreshComparable(s,now));
+  const tierKey=hasExact?'exact':breedFresh.length>=MIN_SAMPLES?'breeding':null;
   if(!tierKey){
-    const have=Math.max(exactCount,breedCount);
-    return pending('MUESTRA_INSUFICIENTE',have+'/'+MIN_SAMPLES+' comparables recientes',have);
+    const have=Math.max(exactEvidence,breedFresh.length);
+    return pending('MUESTRA_INSUFICIENTE',have+'/'+MIN_SAMPLES+' referencias de precio',
+      Math.max(exactFresh.length,breedFresh.length),sold.length);
   }
-  const T=TIERS[tierKey];
-  const peers=tierKey==='exact'?exactPeers:breedPeers;
-  const comparables=tierKey==='exact'?exactCount:breedCount;
-  // Only recently observed offers can set the competitive floor. Old
-  // listings still on screen compete, but they cannot establish a price.
-  const asking=undercut(peers.map(s=>s.price));
-  const soldPrice=tierKey==='exact'&&sold.length?percentile(sold,.5):null;
-  const resale=soldPrice===null?asking:asking?Math.min(asking,soldPrice):soldPrice;
-  const scope=soldPrice===null?T.label:'ventas reales ('+sold.length+')';
+  const {label,minNet,minDiscount,confidence:tierConfidence}=TIERS[tierKey];
+  const exactTier=tierKey==='exact';
+  const fresh=exactTier?exactFresh:breedFresh;
+  const salesUsed=exactTier?sold:[];
+  const comparables=fresh.length,confirmedSales=salesUsed.length;
+  const resale=priceEstimate(exactTier?exactPeers:breedPeers,fresh,salesUsed,now);
+  const scope=confirmedSales===1?'1 venta real + '+comparables+' anuncios':
+    confirmedSales>1?'ventas reales ('+confirmedSales+')':label;
   const net=resale-listing.price-listingFee;
-  const confidence=tierKey==='exact'&&sold.length>=2?1:round1(T.confidence*Math.min(1,.6+.08*comparables));
+  const confidence=confirmedSales>=2?1:round1(tierConfidence*Math.min(1,.6+.08*(comparables+confirmedSales)));
   const discount=resale>0?(resale-listing.price)/resale:0;
-  const deal=dealScore(net)*(.8+.2*confidence);
-  const valueQuality=variant==='normal'?quality:Math.max(1.5,quality);
-  const score=round1(Math.min(10,valueQuality+deal));
-  const {minNet,minDiscount}=T;
-  const result={...base,score,resale,priceReference:resale,netEstimate:net,confidence,scope,tier:tierKey,
-    comparables,discount:+discount.toFixed(3),dealTier:tier(net)};
-  const label=(fit.ideal?'Ideal '+target+' · ':'')+'Gana ~'+money(net)+(tierKey==='exact'&&soldPrice===null?'':' · '+scope);
-  const good=score>=BUY_SCORE&&net>=minNet&&discount>=minDiscount;
+  const result={...base,resale,priceReference:resale,netEstimate:net,confidence,scope,tier:tierKey,
+    comparables,confirmedSales,discount:+discount.toFixed(3),dealTier:tier(net)};
+  if(net<minNet)
+    return {...result,decision:'NO_COMPRAR',reason:'MARGEN_INSUFICIENTE',
+      reasonText:'Margen '+money(net)+' ¥ · mínimo '+money(minNet)+' ¥'};
+  if(discount<minDiscount)
+    return {...result,decision:'NO_COMPRAR',reason:'DESCUENTO_INSUFICIENTE',
+      reasonText:'Descuento '+Math.round(discount*100)+' % · mínimo '+Math.round(minDiscount*100)+' %'};
+  const profit='Margen ~'+money(net)+' ¥';
   if(spendable===null)
-    return {...result,decision:good?'POR_VERIFICAR':'NO_COMPRAR',reason:good?'SALDO_NO_CONFIRMADO':'PUNTAJE_BAJO',
-      reasonText:good?label+' · saldo por confirmar':net<minNet?'Margen '+money(net):'Puntaje bajo · '+money(net)};
-  if(good)
-    return {...result,decision:'COMPRAR',reason:'GANGA_'+tier(net).toUpperCase().replace(' ','_'),reasonText:label};
-  const why=net<minNet?'Margen '+money(net)+(minNet>1000?' (pide '+money(minNet)+', '+scope+')':''):
-    discount<minDiscount?'Solo '+Math.round(discount*100)+'% bajo lo normal ('+scope+')':
-    'Gana ~'+money(net)+' · puntaje bajo';
-  return {...result,decision:net>=minNet&&discount>=minDiscount?'POR_VERIFICAR':'NO_COMPRAR',
-    reason:net<minNet?'MARGEN_INSUFICIENTE':discount<minDiscount?'DESCUENTO_INSUFICIENTE':'PUNTAJE_BAJO',reasonText:why};
+    return {...result,decision:'POR_VERIFICAR',reason:'SALDO_NO_CONFIRMADO',
+      reasonText:'Saldo por confirmar · '+profit};
+  return {...result,decision:'COMPRAR',reason:'GANGA_'+tier(net).toUpperCase().replace(' ','_'),
+    reasonText:profit+' · '+scope};
 }
-module.exports={variantOf,classKeys,TIERS,assess,profileFit,dealScore,percentile,DEFAULT_FEE,BUY_SCORE,MIN_SAMPLES};
+module.exports={variantOf,classKeys,TIERS,assess,profileFit,percentile,DEFAULT_FEE,MIN_SAMPLES};

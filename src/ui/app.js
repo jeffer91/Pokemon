@@ -113,15 +113,15 @@ function renderData(data){
   renderCompetitive(data.competitive||[]);
   renderProjects(data.projects||[]);
   renderActivity(s.activity||[]);
-  $('radar-tip').textContent=(s.total||0)+' anuncios leídos · COMPRAR requiere comparables, margen después de la cuota, '+
-    'al menos 7/10 y saldo disponible. Si faltan datos, el anuncio queda por verificar.';
+  $('radar-tip').textContent=(s.total||0)+' anuncios leídos · COMPRAR requiere referencias de precio, margen neto y saldo disponible. '+
+    'La nota de calidad refleja los IV y el perfil competitivo.';
 
   const listings=$('listings');listings.replaceChildren();
   for(const row of (data.recent||[]).slice(0,8)){
     const tr=document.createElement('tr');
     const label=DECISION_NAME[row.decision]||'—';
     for(const value of [offerName(row),row.ivs?.filter(x=>x===31).length+'×31',
-      Number.isFinite(row.revQuality)?row.revQuality.toFixed(1)+'/10':'—',
+      Number.isFinite(row.qualityScore)?row.qualityScore.toFixed(1)+'/10':'—',
       Number.isFinite(row.netEstimate)?currency(row.netEstimate):'—',
       label+(row.reasonText?' · '+row.reasonText:''),currency(row.price)]){
       const td=document.createElement('td');td.textContent=value;tr.append(td);
@@ -145,6 +145,9 @@ function renderData(data){
   const reasons={
     RESERVA_30_POR_CIENTO:'Supera tu presupuesto disponible',
     MARGEN_INSUFICIENTE:'Margen insuficiente',
+    DESCUENTO_INSUFICIENTE:'Descuento insuficiente para crianza',
+    MUESTRA_INSUFICIENTE:'Faltan referencias de precio',
+    SALDO_NO_CONFIRMADO:'Saldo por confirmar',
     DESCUENTO_Y_MARGEN:'Precio favorable según comparables'
   };
   for(const h of (data.history||[]).slice(0,30)){

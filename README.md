@@ -1,4 +1,4 @@
-# PokéRadar GTL — v0.16.0
+# PokéRadar GTL — v0.16.1
 
 Aplicación de escritorio Electron para Windows 11. **Play** inicia una sesión de lectura visual del GTL, sin formularios de cuota ni posiciones X/Y, y muestra un pequeño radar flotante. No realiza compras ni controla el cliente del juego.
 
@@ -22,7 +22,7 @@ npm test
 
 1. Pulsa **Play**. La ventana principal se minimiza y el indicador compacto aparece. Ya no se exige marcar una casilla ni escribir un importe.
 2. Al abrir GTL → Anuncios de Pokémon, la app intenta reconocer las 10 filas visibles. Se alinea automáticamente con los botones Comprar observados; si no hay suficientes referencias, utiliza una posición relativa al juego.
-3. Si existen suficientes precios comparables, saldo reciente y margen neto estimado positivo, puede mostrar **COMPRAR** o **NO COMPRAR**. Con datos incompletos, no recomienda.
+3. **COMPRAR** indica que el precio cabe en el presupuesto y el margen neto estimado supera el mínimo según las referencias de mercado. **Por verificar** indica que falta confirmar datos del anuncio, referencias de precio o saldo.
 4. Al salir del GTL se compacta. Para detenerla, restaura PokéRadar desde la barra de tareas y pulsa **Stop**.
 5. En **Buscar** verás sugerencias para poblar el historial. En **Historial** puedes consultar registros y confirmar operaciones.
 
@@ -339,6 +339,12 @@ Revisado con la base real del jugador (558 anuncios, 183 especies): el 60 % esta
 - Ritmo: 0,7 s con el GTL visible (OCR solo si la tabla cambia), 2,5 s fuera del GTL y pausa total mientras usas la ventana de PokéRadar.
 
 **Versión visible** en la cabecera, en el título de la ventana y en el diagnóstico.
+
+## v0.16.1 — Margen de reventa y calidad
+
+- **COMPRAR** se decide por evidencia de precio, presupuesto y margen neto después de la cuota. La nota de calidad de 0 a 10 refleja los IV y el perfil competitivo. El margen mínimo es de **1.000 ¥** con anuncios equivalentes y de **2.000 ¥** con un descuento de al menos **20 %** al usar precios de crianza.
+- Se exigen tres anuncios comparables recientes, dos ventas propias confirmadas de la misma clase o una venta confirmada y dos anuncios equivalentes. Las referencias separan especie, sexo, variante y posiciones de los IV de 31. Los precios de crianza permiten otras naturalezas con el mismo patrón de IV en ejemplares normales sin perfil ideal.
+- Los competidores vistos en los últimos **15 minutos** pueden poner un tope directo al precio de reventa. Si hay pocas observaciones de esa ventana, la estimación también considera la parte baja de los precios recientes del historial.
 
 ## v0.16.0 — Gangas y aprendizaje
 
